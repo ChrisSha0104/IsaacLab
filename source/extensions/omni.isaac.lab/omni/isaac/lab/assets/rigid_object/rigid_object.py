@@ -158,8 +158,8 @@ class RigidObject(AssetBase):
         """
 
         # set into simulation
-        self.write_root_pose_to_sim(root_state[:, :7], env_ids=env_ids)
-        self.write_root_velocity_to_sim(root_state[:, 7:], env_ids=env_ids)
+        self.write_root_pose_to_sim(root_state[env_ids, :7], env_ids=env_ids)#NOTE: CHANGED THIS FROM APPLYING TO ALL ENVS
+        self.write_root_velocity_to_sim(root_state[env_ids, 7:], env_ids=env_ids)#NOTE: CHANGED THIS FROM APPLYING TO ALL ENVS
 
     def write_root_com_state_to_sim(self, root_state: torch.Tensor, env_ids: Sequence[int] | None = None):
         """Set the root center of mass state over selected environment indices into the simulation.

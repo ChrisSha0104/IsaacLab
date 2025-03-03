@@ -1,0 +1,54 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+"""
+Franka-Cabinet environment.
+"""
+
+import gymnasium as gym
+
+from . import agents
+from .xarm_cube_residual_cam_env_v0 import XArmCubeResidualCamLocalEnv, XArmCubeResidualCamLocalEnvCfg
+from .xarm_cube_residual_cam_env_v1 import XArmCubeResidualCamLocalBinaryEnv, XArmCubeResidualCamLocalBinaryEnvCfg
+from .xarm_cube_residual_cam_env_v2 import XArmCubeResidualCamLocalBinaryNewEnv, XArmCubeResidualCamLocalBinaryNewEnvCfg
+
+##
+# Register Gym environments.
+##
+
+gym.register(
+    id="XArm-Residual-Cube-v0", #NOTE: local policy with relative coordinates, deployable on real setup
+    entry_point="omni.isaac.lab_tasks.direct.xarm_cube_residual:XArmCubeResidualCamLocalEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": XArmCubeResidualCamLocalEnvCfg,
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCamCfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="XArm-Residual-Cube-v1", #NOTE: v0 + binary gripper status
+    entry_point="omni.isaac.lab_tasks.direct.xarm_cube_residual:XArmCubeResidualCamLocalBinaryEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": XArmCubeResidualCamLocalBinaryEnvCfg,
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCamCfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="XArm-Residual-Cube-v2", #NOTE: v1 + follow ResiP designs (network structures & obs space)
+    entry_point="omni.isaac.lab_tasks.direct.xarm_cube_residual:XArmCubeResidualCamLocalBinaryNewEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": XArmCubeResidualCamLocalBinaryNewEnvCfg,
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCamV2Cfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+    },
+)
