@@ -46,13 +46,13 @@ import os
 
 
 @configclass
-class XArmCubeResidualCamLocalBinaryEnvCfg(DirectRLEnvCfg):
+class XArmCubeResidualStateLocalBinaryNewEnvCfg(DirectRLEnvCfg):
     # env 
     episode_length_s = 6.6666 #3.31 ~ 200 timesteps  # 8.3333 = 500 timesteps #TODO: reduce episode length if needed
     decimation = 2
     action_space: int = 8 # ee waypoint
-    observation_space = 3*8 + 4*8 + 120*120 # last 3 wp + last 3 expert wp
-    state_space = 3*8 + 4*8 + 120*120 + 7 + 1
+    observation_space = 14 + 8 + 7 # last 3 wp + last 3 expert wp
+    state_space = 14+8+7
     rerender_on_reset = False
 
     # simulation
@@ -161,25 +161,6 @@ class XArmCubeResidualCamLocalBinaryEnvCfg(DirectRLEnvCfg):
             ),
         )
     
-    # cameras
-    camera = TiledCameraCfg(
-        prim_path="/World/envs/env_.*/Robot/link_eef/cam",
-        offset=TiledCameraCfg.OffsetCfg(pos=(0.09, 0.0, 0.05), rot=(0.866, 0.0, -0.3, 0.0), convention="ros"), # z-down; x-forward
-        height=120,
-        width=120,
-        data_types=[
-            # "rgb",
-            "distance_to_image_plane",
-            # "normals",
-            # "semantic_segmentation",
-            # "instance_segmentation_fast",
-            # "instance_id_segmentation_fast",
-            ],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=21.315, focus_distance=400.0, horizontal_aperture=24, clipping_range=(0.01, 20) # NOTE: unit in cm
-        ),
-    )
-
     # ground plane
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -199,34 +180,35 @@ class XArmCubeResidualCamLocalBinaryEnvCfg(DirectRLEnvCfg):
     clean_demo = False
     debug_ee = False
     debug_joint_pos = False
-    mark_ee = False
-    mark_demo = False
-    show_camera = True # option only used for play
+    mark_ee = True
+    mark_demo = True
+    show_camera = False # option only used for play
     
     # training options:
+    learn_std = True
     use_privilege_obs = True
     intervene_step = 0 # NOTE: not used
-    apply_dmr = True # NOTE: DMR turned off during play
+    apply_dmr = False # NOTE: DMR turned off during play
     num_demos = 2
     use_relative_coordinates = True
     train_encoder = True
-
+    
     alpha = 0.1
     rel_action_scale = 5
     dof_velocity_scale = 0.1
     minimal_height = 0.05
     std = 0.1
 
-    # reward scales stage 1
-    # --- task-completion ---
-    ee_dist_reward_scale = 0.2 
-    height_reward_scale = 1.0
-    gripper_height = -10.0
+    # # reward scales stage 1
+    # # --- task-completion ---
+    # ee_dist_reward_scale = 0.1 
+    # height_reward_scale = 1.0
+    # gripper_height = -10.0 # remove rn
 
-    # --- auxiliary ---
-    residual_penalty_scale = -5.0
-    action_penalty = -0.25
-    # overgrasp = -0.5
+    # # --- auxiliary ---
+    # residual_penalty_scale = -10.0
+    # action_penalty = -0.5
+    # # overgrasp = -0.5
 
     # # reward scales stage 2
     # # --- task-completion ---
@@ -239,7 +221,18 @@ class XArmCubeResidualCamLocalBinaryEnvCfg(DirectRLEnvCfg):
     # action_penalty = -0.5
     # overgrasp = -0.5
 
-class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
+    # reward scale RESIDUAL
+    # --- task-completion ---
+    completion_scale = 10.0
+
+    # --- auxiliary ---
+    residual_penalty_scale = -5.0
+    action_penalty_scale = -0.5
+    velocity_penalty_scale = -0.1
+    gripper_height_scale = -10.0
+
+
+class XArmCubeResidualStateLocalBinaryNewEnv(DirectRLEnv):
     # pre-physics step calls
     #   |-- _pre_physics_step(action)
     #   |-- _apply_action()
@@ -249,9 +242,9 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
     #   |-- _reset_idx(env_ids)
     #   |-- _get_observations()
 
-    cfg: XArmCubeResidualCamLocalBinaryEnvCfg
+    cfg: XArmCubeResidualStateLocalBinaryNewEnvCfg
 
-    def __init__(self, cfg: XArmCubeResidualCamLocalBinaryEnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: XArmCubeResidualStateLocalBinaryNewEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         
         if self.cfg.debug_ee or self.cfg.debug_joint_pos or self.cfg.mark_demo or self.cfg.show_demo:
@@ -291,7 +284,7 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
         self.robot_dof_lower_limits = self._robot.data.soft_joint_pos_limits[0, :, 0].to(device=self.device)
         self.robot_dof_upper_limits = self._robot.data.soft_joint_pos_limits[0, :, 1].to(device=self.device)
 
-        self.robot_position_upper_limits = torch.tensor([[0.55, 0.5, 0.5]], device=self.device)
+        self.robot_position_upper_limits = torch.tensor([[0.65, 0.5, 0.5]], device=self.device)
         self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.17]], device=self.device)
 
         self.num_eff_joints = self._robot.num_joints - 5
@@ -302,12 +295,11 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
         self.last_action = self._robot.data.default_joint_pos[:, :8].clone()
 
         # init obs buffer for robot and demo history waypoints
-        self.robot_wp_obs = torch.zeros((self.num_envs, 8), device=self.device).repeat(1,3)
-        self.demo_wp_obs = torch.zeros((self.num_envs, 8), device=self.device).repeat(1,4)
+        self.teleop_comm_obs = torch.zeros((self.num_envs, 8), device=self.device) # most recent rel teleop ee command for each env
 
         # create time-based indexing for demo trajectories
         self.time_step_per_env = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
-        self.demo_idx = torch.zeros(self.num_envs, device=self.device, dtype=torch.long).unsqueeze(1).repeat(1, 8)
+        self.demo_idx = torch.zeros(self.num_envs, device=self.device, dtype=torch.long).unsqueeze(1).repeat(1, 8) # which demo is each env current on
         self.offsets = torch.arange(8, device=self.device)
         self.env_idx = torch.arange(self.num_envs, device=self.device).unsqueeze(1).repeat(1, 8)
 
@@ -321,7 +313,7 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
         # load demo traj
         self.traj_length = 400
         self.demo_traj = torch.zeros((self.num_envs, self.cfg.action_space*self.traj_length, self.cfg.num_demos), device=self.device)
-        self.init_ee = torch.tensor([[ 0.2558, -0.0054,  0.3961,  0.0250,  0.9995, -0.0018,  0.0171, 0.0]], device=self.device).repeat(self.num_envs, 1) # NOTE: Hardcoded: obtained after initialization
+        self.init_ee = torch.tensor([[ 0.256, 0.00,  0.399,  0.00,  1.00, 0.00,  0.00, 0.0]], device=self.device).repeat(self.num_envs, 1) # NOTE: Hardcoded: obtained after initialization
 
         all_demos = []
         for i in range(1,self.cfg.num_demos+1):
@@ -335,7 +327,7 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
             
         self.demo_traj_abs = torch.stack(all_demos, dim=-1)
         self.demo_traj_rel = abs_to_rel_traj(self.init_ee, self.demo_traj_abs)
-        # export_tensor_to_txt(self.demo_traj_rel[0,:,0].reshape(1,400,8), "/home/shuosha/Desktop/new_traj.txt")
+        # export_tensor_to_txt(self.demo_traj_rel[0,:,1].reshape(1,400,8), "/home/shuosha/Desktop/new_traj2.txt")
         # exit()
 
         diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
@@ -344,11 +336,9 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self._cube = RigidObject(self.cfg.cube)
-        self._camera = TiledCamera(self.cfg.camera)
 
         self.scene.articulations["robot"] = self._robot
         self.scene.rigid_objects["cube"] = self._cube
-        self.scene.sensors["camera"] = self._camera
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -374,7 +364,10 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
         # for RP, the arg actions is the residual!
         self.ee_residual = self.cfg.alpha * ee_residual.clone()
         # print("ee residual")
-        # format_tensor(ee_residual)
+        # format_tensor(self.ee_residual)
+        # print("demo ee")
+        # format_tensor(self.training_demo_traj[self.env_idx, self.action_idx, self.demo_idx] + self.init_ee)
+
         
         if self.cfg.show_demo:# or self.time_step_per_env < self.cfg.intervene_step:
             if self.cfg.use_relative_coordinates:
@@ -433,27 +426,16 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
     def step(self, ee_residual):
         _return = super().step(ee_residual)
 
-        # update robot wp
-        self.robot_wp_obs = torch.roll(self.robot_wp_obs, shifts = 8, dims = 1)
-
-        if self.cfg.use_relative_coordinates:
-            self.robot_wp_obs[:, :8] = self.get_curr_waypoint_b() - self.init_ee
-        else:
-            self.robot_wp_obs[:, :8] = self.get_curr_waypoint_b()
-
         # update demo wp
         self.action_idx = self.time_step_per_env.unsqueeze(1)*8 + self.offsets
-        self.demo_wp_obs = torch.roll(self.demo_wp_obs, shifts = 8, dims = 1)
-        self.demo_wp_obs[:, :8] = self.training_demo_traj[self.env_idx, self.action_idx, self.demo_idx]
+        self.teleop_comm_obs[:] = self.training_demo_traj[self.env_idx, self.action_idx, self.demo_idx]
 
         if self.cfg.mark_demo:
             if self.cfg.use_relative_coordinates:
-                self.demo_ee_marker.visualize(self.demo_wp_obs[:, :3] + self.init_ee[:,:3] + self.scene.env_origins[:,:3], 
-                                              (self.demo_wp_obs[:,3:7] + self.init_ee[:,3:7])/torch.norm((self.demo_wp_obs[:,3:7] + self.init_ee[:,3:7]), keepdim=True))                
+                self.demo_ee_marker.visualize(self.teleop_comm_obs[:, :3] + self.init_ee[:,:3] + self.scene.env_origins[:,:3], 
+                                              (self.teleop_comm_obs[:,3:7] + self.init_ee[:,3:7])/torch.norm((self.teleop_comm_obs[:,3:7] + self.init_ee[:,3:7]), keepdim=True))                
             else:
-                self.demo_ee_marker.visualize(self.demo_wp_obs[:, :3] - self.scene.env_origins[:,:3], self.demo_wp_obs[:,3:7])
-
-        self._camera.update(dt=self.dt)
+                self.demo_ee_marker.visualize(self.teleop_comm_obs[:, :3] - self.scene.env_origins[:,:3], self.teleop_comm_obs[:,3:7])
         return _return
 
 
@@ -511,7 +493,7 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
         else:
             if self.cfg.use_relative_coordinates:
                 step_interval = int(torch.randint(20, 31, (1,)).item())
-                noise_level = torch.rand(1).item() * (0.04 - 0.02) + 0.02
+                noise_level = torch.rand(1).item() * (0.02 - 0.01) + 0.01
                 beta_filter = torch.rand(1).item() * (0.7 - 0.5) + 0.5
                 noised_traj_abs = smooth_noisy_trajectory(self.demo_traj_abs, env_ids, step_interval=step_interval, noise_level=noise_level, beta_filter=beta_filter) #TODO: randomize step_interval, noise_level, and beta_filter
                 self.training_demo_traj = abs_to_rel_traj(self.init_ee, noised_traj_abs)
@@ -523,61 +505,59 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
         self._cube.write_root_state_to_sim(root_state=reseted_root_states, env_ids=env_ids) #NOTE: no render on reset
         self._cube.reset(env_ids)
 
-        # camera
-        self._camera.reset(env_ids)
-
         # controller
         self.diff_ik_controller.reset(env_ids)
 
-        self.time_step_per_env[env_ids] = 0
-        self.robot_wp_obs[env_ids, :] = 0
-        self.demo_wp_obs[env_ids, :] = 0
-        self.demo_wp_obs[env_ids,:8] = self.training_demo_traj[env_ids,:8, 0]
-
         self.demo_idx[env_ids, :] = (self.demo_idx[env_ids, :] + 1) % self.cfg.num_demos 
+        self.time_step_per_env[env_ids] = 0
+        self.teleop_comm_obs[env_ids,:] = self.training_demo_traj[env_ids,:8, self.demo_idx[env_ids, 0]] #+ self.init_ee[env_ids,:8]
+
         super()._reset_idx(env_ids)
+        # self.init_ee = torch.concat((
+        #     self._robot.data.body_link_state_w[env_ids, 9, :7],  torch.mean(self._robot.data.joint_pos[env_ids,7:], dim=1).unsqueeze(1)
+        # ), dim=-1)
+        # self.init_ee[env_ids,:3] -= self.scene.env_origins[env_ids,:3]
+        # print("init ee")
+        # format_tensor(self.init_ee)
+        # import pdb; pdb.set_trace() 
+
 
     def _get_observations(self) -> dict:
-        depth_clean = self._camera.data.output["distance_to_image_plane"].permute(0,3,1,2) # From (B, H, W, 1) to (B, 1, H, W)
-        vis = cv2.resize(depth_clean[0,0].cpu().numpy(), (20, 20), interpolation=cv2.INTER_NEAREST)
-        # print(np.round(vis, 2))
-        # print(self.demo_wp_obs)
-        # print(self.robot_wp_obs)
-        # import pdb; pdb.set_trace()
-        depth_noised = simulate_depth_noise(depth_clean)
-        depth_noised = normalize_depth_01(depth_noised)
+        robot_state_obs = self.get_robot_state_b()
+        # robot_state_obs[:,:8] -= self.init_ee
+
+        # print("robot ee")
+        # format_tensor(self.get_curr_waypoint_b())
+        # print("teleop comm")
+        # teleop_comm = self.teleop_comm_obs + self.init_ee
+        # format_tensor(teleop_comm)
 
         cube_pos_b, cube_quat_b = subtract_frame_transforms(
             self._robot.data.body_link_state_w[:,9,:3], self._robot.data.body_link_state_w[:,9,3:7], self._cube.data.body_link_state_w[:,0,:3], self._cube.data.body_link_state_w[:,0,3:7]
         )
 
+        cube_ee_b = torch.cat((cube_pos_b, cube_quat_b), dim=-1)
+
+        cube_ee_min = torch.tensor([[0.1, -0.3, 0.0, -1.0, -1.0, -1.0, -1.0]], device=self.device).repeat(self.num_envs, 1)
+        cube_ee_max = torch.tensor([[0.6, 0.3, 0.5, 1.0, 1.0, 1.0, 1.0]], device=self.device).repeat(self.num_envs, 1)
+
+        robot_state_min = torch.tensor([[0.15, -0.5, 0.17, -1.0, -1.0, -1.0, -1.0, 0.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0]], device=self.device).repeat(self.num_envs, 1)
+        robot_state_max = torch.tensor([[0.65, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 0.5, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]], device=self.device).repeat(self.num_envs, 1)
+
+        standardized_robot_state_obs = (robot_state_obs - robot_state_min) / (robot_state_max - robot_state_min)
+        standardized_teleop_comm_obs = ((self.teleop_comm_obs+self.init_ee) - robot_state_min[:,:8]) / (robot_state_max[:,:8] - robot_state_min[:,:8])
+        standardized_cube_ee_obs = (cube_ee_b - cube_ee_min) / (cube_ee_max - cube_ee_min)
+
         actor_obs = torch.cat(
             (
-                self.robot_wp_obs*self.cfg.rel_action_scale, 
-                self.demo_wp_obs*self.cfg.rel_action_scale, #TODO change to abs
-                depth_noised,
+                standardized_robot_state_obs, # 14 dim
+                standardized_teleop_comm_obs, # 8 dim
+                standardized_cube_ee_obs, # 7 dim
             ),
             dim=-1,
         )
 
-        if self.cfg.use_privilege_obs:
-            critic_obs = torch.cat(
-                (
-                    self.robot_wp_obs*self.cfg.rel_action_scale,
-                    self.demo_wp_obs*self.cfg.rel_action_scale,
-                    cube_pos_b,
-                    cube_quat_b,
-                    self.demo_idx[:,:1],
-                    depth_noised,
-                ),
-                dim=-1,
-            )
-
-            return {"policy": torch.clamp(actor_obs, -5.0, 5.0),
-                    "critic": torch.clamp(critic_obs, -5.0, 5.0)}
-        
-        else: 
-            return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
+        return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
 
     def _compute_rewards(self):
         # height of the cube
@@ -613,30 +593,39 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
         closing_gripper = torch.exp(self._robot.data.joint_pos[:, 7]).clamp(0.0,50.0)
         closing_gripper *= ((self._robot.data.body_link_state_w[:,9,2] < 0.20) | (self._cube.data.root_pos_w[:, 2] > self.cfg.minimal_height) | (self.time_step_per_env > 200))
 
+        # completion reward at end of episode
+        completion_condition = (self._cube.data.root_pos_w[:, 2] > 0.15) & (self.episode_length_buf >= self.max_episode_length - 1)
+        completion = torch.where(completion_condition, 1.0, 0.0)
+
+        # velocity penalty
+        velocity_penalty = torch.norm(self._robot.data.body_link_state_w[:,9,7:10], p=2, dim=1)
+
         rewards = (
-            + self.cfg.height_reward_scale * height_reward
+            # + self.cfg.height_reward_scale * height_reward
             + self.cfg.residual_penalty_scale * residual_penalty
-            + self.cfg.ee_dist_reward_scale * ee_dist_reward
-            + self.cfg.action_penalty * action_penalty
-            + self.cfg.gripper_height * gripper_height
+            # + self.cfg.ee_dist_reward_scale * ee_dist_reward
+            + self.cfg.action_penalty_scale * action_penalty
+            + self.cfg.gripper_height_scale * gripper_height
+            + self.cfg.completion_scale * completion
+            + self.cfg.velocity_penalty_scale * velocity_penalty
             # + self.cfg.overgrasp * overgrasp
             # + self.cfg.closing_gripper * closing_gripper
         )
 
-        rewards = torch.where(self._cube.data.root_pos_w[:, 2] > 0.05, rewards + 0.25, rewards)
-        rewards = torch.where(self._cube.data.root_pos_w[:, 2] > 0.1, rewards + 0.25, rewards)
+        # rewards = torch.where(self._cube.data.root_pos_w[:, 2] > 0.05, rewards + 0.25, rewards)
+        # rewards = torch.where(self._cube.data.root_pos_w[:, 2] > 0.1, rewards + 0.25, rewards)
         # rewards = torch.where(self._cube.data.root_pos_w[:, 2] > 0.15, rewards + 1.0, rewards)
 
         self.extras["log"] = {
-            "height_reward": (self.cfg.height_reward_scale * height_reward).mean(),
+            # "height_reward": (self.cfg.height_reward_scale * height_reward).mean(),
             "residual_penalty": (self.cfg.residual_penalty_scale * residual_penalty).mean(),
-            "ee_dist_reward": (self.cfg.ee_dist_reward_scale * ee_dist_reward).mean(),
-            "action_penalty": (self.cfg.action_penalty * action_penalty).mean(),
-            "gripper_height": (self.cfg.gripper_height * gripper_height).mean(),
-            # "overgrasp": (self.cfg.overgrasp * overgrasp).mean(),
-            # "closing_gripper": (self.cfg.closing_gripper * closing_gripper).mean(),
+            # "ee_dist_reward": (self.cfg.ee_dist_reward_scale * ee_dist_reward).mean(),
+            "action_penalty": (self.cfg.action_penalty_scale * action_penalty).mean(),
+            "gripper_height": (self.cfg.gripper_height_scale * gripper_height).mean(),
+            "completion": (self.cfg.completion_scale * completion).mean(),
+            "velocity_penalty": (self.cfg.velocity_penalty_scale * velocity_penalty).mean(),
         }
-
+        
         return rewards
     
     def create_filter_pairs(self, prim1: str, prim2: str):
@@ -660,6 +649,30 @@ class XArmCubeResidualCamLocalBinaryEnv(DirectRLEnv):
         curr_ee_pos_combined_b = torch.cat((curr_ee_pos_b, curr_ee_quat_b, curr_finger_status), dim=-1)
 
         return curr_ee_pos_combined_b
+    
+    def get_robot_state_b(self):
+        # ee and root pose in world frame
+        curr_state_w= self._robot.data.body_link_state_w[:,9,:]
+        curr_root_state = self._robot.data.root_state_w[:]
+
+        # ee pose in base (local) frame
+        curr_ee_pos_b, curr_ee_quat_b = subtract_frame_transforms(
+                curr_root_state[:, 0:3], curr_root_state[:, 3:7], curr_state_w[:, 0:3], curr_state_w[:, 3:7]
+            )
+        
+        # ee pose in base (local) frame
+        curr_lin_vel_b, _ = subtract_frame_transforms(
+                curr_root_state[:, 7:10], curr_root_state[:, 3:7], curr_state_w[:, 7:10], curr_state_w[:, 3:7]
+            )
+        
+        curr_ang_vel_b, _ = subtract_frame_transforms(
+                curr_root_state[:, 10:13], curr_root_state[:, 3:7], curr_state_w[:, 10:13], curr_state_w[:, 3:7]
+            )
+
+        curr_finger_status = torch.mean(self._robot.data.joint_pos[:,7:], dim=1).unsqueeze(1)
+        curr_robot_state_b = torch.cat((curr_ee_pos_b, curr_ee_quat_b, curr_finger_status, curr_lin_vel_b, curr_ang_vel_b), dim=-1)
+
+        return curr_robot_state_b
 
     def get_joint_pos_from_ee_pos(self, controller: DifferentialIKController, ee_goal):
         ee_abs_b = self.get_curr_waypoint_b() # (num_envs, 8)

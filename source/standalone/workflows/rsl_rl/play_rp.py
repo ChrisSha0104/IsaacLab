@@ -12,6 +12,7 @@ import argparse
 from omni.isaac.lab.app import AppLauncher
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
 # local imports
 import cli_args  # isort: skip
@@ -134,7 +135,7 @@ def main():
     timestep = 0
     slowly = False
     
-    # turn off dmr during paly
+    # turn off dmr during play?
     apply_dmr = False
     setattr(env.cfg, "apply_dmr", apply_dmr)
 
@@ -150,20 +151,16 @@ def main():
             if slowly:
                 time.sleep(0.2)
             # agent stepping
-            actions = policy(obs)
-            # print("actions: ", actions)
+            actions = policy(obs) # output residual
+            # print("residual: ", actions)
 
             # env stepping
             obs, rew, dones, extras = env.step(actions)
-            # print(obs.shape)
-            # print("current gripper pos: ")
-            # format_tensor(obs[0,:8])
-            # format_tensor(obs[0,24:32])
             if getattr(env.cfg, "show_camera", False): 
-                raw_depth = obs[0,56:].reshape(120,120).detach().cpu().numpy()              # convert to np array
-                rotated_depth = cv2.rotate(raw_depth, cv2.ROTATE_90_COUNTERCLOCKWISE)
-                depth_vis = cv2.applyColorMap(cv2.convertScaleAbs(rotated_depth, alpha=255 / raw_depth[raw_depth < 15].max().item()), cv2.COLORMAP_JET)
-                depth_vis = cv2.resize(depth_vis,(512,512))
+                raw_depth = obs[0,26:].reshape(120,120).detach().cpu().numpy()              # convert to np array
+                # rotated_depth = cv2.rotate(raw_depth, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                depth_vis = cv2.applyColorMap(cv2.convertScaleAbs(raw_depth, alpha=255 / raw_depth[raw_depth < 15].max().item()), cv2.COLORMAP_JET)
+                depth_vis = cv2.resize(depth_vis,(480,480))
                 cv2.imshow("depth_image",depth_vis)
                 cv2.waitKey(1)
             
