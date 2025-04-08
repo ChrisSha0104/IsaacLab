@@ -325,7 +325,7 @@ def validate_rotation_matrix(R: torch.Tensor, tol=1e-3) -> bool:
     # Compute R R^T and compare to I.
     # If R is batched, this computes the norm over the last two dims.
     err = torch.norm(torch.matmul(R, R.transpose(-2, -1)) - I, dim=(-2, -1))
-    return (err < tol).all()
+    return (err < tol).all() # type: ignore
 
 def project_rotation_matrix(R: torch.Tensor) -> torch.Tensor:
     """
@@ -625,6 +625,47 @@ def interpolate_10d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor,
     
     return trajectory
 
+def interpolate_7d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor, num_steps: int) -> torch.Tensor:
+    """
+    Generate a trajectory between initial and final end-effector poses for multiple environments,
+    using linear interpolation for position and SLERP for quaternions.
+    
+    Each end-effector pose is defined as:
+        [position (3D), quaternion (4D)] = total 7D.
+    
+    Args:
+        ee_init (torch.Tensor): Initial poses, shape (num_envs, 7).
+        ee_final (torch.Tensor): Final poses, shape (num_envs, 7).
+        num_steps (int): Number of interpolation steps.
+    
+    Returns:
+        torch.Tensor: Trajectory of shape (num_envs, num_steps, 7)
+    """
+    if ee_init.shape != ee_final.shape or ee_init.shape[1] != 7:
+        raise ValueError("ee_init and ee_final must have the same shape and be (num_envs, 7).")
+    
+    num_envs = ee_init.shape[0]
+    
+    # Create interpolation factors: shape (num_steps,)
+    ts = torch.linspace(0, 1, steps=num_steps, device=ee_init.device, dtype=ee_init.dtype)
+    
+    # ---- Interpolate Position (first 3 dims) ----
+    pos_init = ee_init[:, :3]   # shape (num_envs, 3)
+    pos_final = ee_final[:, :3] # shape (num_envs, 3)
+    # (num_envs, 1, 3) broadcast with (1, num_steps, 3)
+    pos_traj = pos_init.unsqueeze(1) * (1 - ts.view(1, num_steps, 1)) + pos_final.unsqueeze(1) * ts.view(1, num_steps, 1)
+    
+    # ---- Interpolate quat using SLERP ----
+    q_init = ee_init[:, 3:7]    # shape (num_envs, 4)
+    q_final = ee_final[:, 3:7]   # shape (num_envs, 4)
+    
+    # Perform batched SLERP.
+    q_traj = slerp_batch(q_init, q_final, ts)  # shape (num_envs, num_steps, 4)
+    
+    # ---- Concatenate all components ----
+    trajectory = torch.cat([pos_traj, q_traj], dim=-1)  # (num_envs, num_steps, 7)
+    
+    return trajectory
 
 def generate_demo_ee_trajectory(ee_traj_storage: torch.Tensor, env_ids: torch.Tensor, ee_init: torch.Tensor, ee_reach: torch.Tensor, traj_length: int = 400) -> torch.Tensor:
     """
@@ -875,7 +916,7 @@ def cubic_spline_nd_function_torch(points: torch.Tensor,
 
     # 2) Return a closure that evaluates at any t in [0, N-1]
     def spline_func(t: float) -> torch.Tensor:
-        return eval_cubic_spline_nd_torch_batched(points, M, t)
+        return eval_cubic_spline_nd_torch_batched(points, M, t) # type: ignore
 
     return spline_func
 

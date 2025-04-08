@@ -41,6 +41,7 @@ import torch
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import AssetBaseCfg
@@ -52,6 +53,7 @@ from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 from omni.isaac.lab.utils.math import subtract_frame_transforms
+from omni.isaac.lab.utils.math import sample_uniform, euler_xyz_from_quat, quat_from_euler_xyz, quat_from_matrix, subtract_frame_transforms, quat_mul, matrix_from_quat
 
 from omni.isaac.lab.assets import Articulation, ArticulationCfg
 from omni.isaac.lab.actuators.actuator_cfg import ImplicitActuatorCfg
@@ -62,6 +64,8 @@ from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 
 from omni.isaac.core.utils.stage import get_current_stage
 from pxr import UsdPhysics, Usd
+from RRL.utilities import *
+import pdb
 
 ##
 # Pre-defined configs
@@ -70,7 +74,7 @@ from omni.isaac.lab_assets import FRANKA_PANDA_HIGH_PD_CFG, UR10_CFG  # isort:sk
 
 
 @configclass
-class FrankaCabinetScene(InteractiveSceneCfg):
+class XArmCubeScene(InteractiveSceneCfg):
     """Configuration for a cart-pole scene."""
 
     # ground plane
@@ -108,14 +112,14 @@ class FrankaCabinetScene(InteractiveSceneCfg):
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
-                "joint1": -0.0037,
-                "joint2": -0.781,
-                "joint3": 0.00095,
-                "joint4": 0.5280, # 30
-                "joint5": -0.003766,
-                "joint6": 1.31369, # 75
-                "joint7": -0.0016879,
-                "drive_joint": 0.00625,
+                "joint1": 0.0,
+                "joint2": 0.0,
+                "joint3": 0.0,
+                "joint4": 0.0, # 30
+                "joint5": 0.0,
+                "joint6": 0.0, # 75
+                "joint7": 0.0,
+                "drive_joint": 0.0,
                 "left_finger_joint": 0.0,
                 "left_inner_knuckle_joint": 0.0,
                 "right_outer_knuckle_joint": 0.0,
@@ -151,7 +155,7 @@ class FrankaCabinetScene(InteractiveSceneCfg):
                 joint_names_expr=["drive_joint"], 
                 # effort_limit=200.0,
                 # velocity_limit=0.2,
-                stiffness=2e3, # TODO
+                stiffness=2e3,
                 damping=1e2,
             ),
         },
@@ -166,97 +170,95 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     robot_entity_cfg = SceneEntityCfg("robot", joint_names=["joint.*"], body_names=["xarm_gripper_base_link"]) # TODO: check
     robot_entity_cfg.resolve(scene)
 
+    diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
+    diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=scene.num_envs, device=sim.device)
+    
+    ik_commands = torch.zeros(scene.num_envs, diff_ik_controller.action_dim, device=robot.device)
+    ee_jacobi_idx = robot_entity_cfg.body_ids[0] - 1 # type: ignore
+
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
     decimation = 4
     sim_step_counter = 0
     count = 0
 
-    # Simulation loop
-    curr_jpos_list = torch.from_numpy(np.loadtxt("/home/shuosha/projects/IsaacLab/RRL/demo_trajs/real_jpos_trajs/curr_jpos.txt")).float()
-    curr_jpos_list = curr_jpos_list.to('cuda:0')[60:, :7]
-    delta_jpos_list = torch.from_numpy(np.loadtxt("/home/shuosha/projects/IsaacLab/RRL/demo_trajs/real_jpos_trajs/delta_jpos.txt")).float()
-    delta_jpos_list = delta_jpos_list.to('cuda:0')[60:, :7]
-    new_jpos_list = torch.from_numpy(np.loadtxt("/home/shuosha/projects/IsaacLab/RRL/demo_trajs/real_jpos_trajs/new_jpos.txt")).float()
-    new_jpos_list = new_jpos_list.to('cuda:0')[60:, :7]
+    qpos_traj = torch.from_numpy(np.loadtxt("RRL/sim2real_data/qpos_goal.txt")).float() # without gripper pose
+    qpos_traj = qpos_traj.to('cuda:0')[:, :7]
+    teleop_obs_traj_real = torch.from_numpy(np.loadtxt("RRL/sim2real_data/teleop_obs.txt")).float()  # load teleop observations
+    teleop_obs_traj_real = teleop_obs_traj_real.to('cuda:0')  # ensure it's on the same device as qpos_traj
+    robot_obs_traj_real = torch.from_numpy(np.loadtxt("RRL/sim2real_data/robot_obs.txt")).float()  # load robot observations
+    robot_obs_traj_real = robot_obs_traj_real.to('cuda:0')  # ensure it's on the same device as qpos_traj
 
-    joint_pos_init = torch.cat((curr_jpos_list[0, :].clone().unsqueeze(0), torch.zeros((1,6)).to('cuda:0')), dim=1)
-    joint_vel_init = robot.data.default_joint_vel.clone()
-
-    robot.write_joint_state_to_sim(joint_pos_init, joint_vel_init)
-    robot.reset()
-    print("done resetting")
+    # reset robot
+    joint_pos = qpos_traj[0,:].clone().unsqueeze(0) # (1, 7)
+    joint_pos = torch.cat((joint_pos, torch.zeros((1,6)).to('cuda:0')), dim=1)  # ensure it's a 2D tensor
+    joint_vel = robot.data.default_joint_vel.clone()
     
-    new_jpos_sim = []
+    robot.write_joint_state_to_sim(joint_pos, joint_vel)
+    robot.reset()
+    print("initial qpos goal: ", joint_pos[:, :7])
+    print("robot qpos: ", robot.data.joint_pos[:, :7])  
+    
+    # reset controller
+    # ik_commands[:] = torch.from_numpy(ee_poses[0, :].reshape(1,-1)).to(device='cuda')
+    diff_ik_controller.reset()
+    # diff_ik_controller.set_command(ik_commands)
 
-    jpos_traj_sim = []
-    jpos_traj_real = []
-    jpos_goal_traj = []
+    robot_obs_traj_sim = []    
+    robot_obs_hist = HistoryBuffer(1, 50, 16, device='cuda:0') # type: ignore
 
+    # Simulation loop
     while simulation_app.is_running(): 
-        # match init pos at every step
-        # joint_pos_init = torch.cat((curr_jpos_list[sim_step_counter, :].clone().unsqueeze(0), torch.zeros((1,6)).to('cuda:0')), dim=1)
-        # joint_vel_init = robot.data.default_joint_vel.clone()
-        # robot.write_joint_state_to_sim(joint_pos_init, joint_vel_init)
-        # robot.reset() 
+        for i in range(qpos_traj.shape[0]):
+            qpos_goal = qpos_traj[i, :7].clone()  # get the goal from teleop observations
 
-        print("curr jpos sim: ", robot.data.joint_pos[:, :7].clone())
-        jpos_traj_sim.append(robot.data.joint_pos[:, :7].clone())
-        print("curr jpos real: ", curr_jpos_list[sim_step_counter, :])
-        jpos_traj_real.append(curr_jpos_list[sim_step_counter, :].clone().unsqueeze(0))
+            # apply qpos goal to the robot
+            for _ in range(decimation):
+                # apply jpos action
+                robot.set_joint_position_target(qpos_goal.reshape(1,-1), joint_ids=[0,1,2,3,4,5,6])
+                # set actions into simulator
+                scene.write_data_to_sim()
+                # simulate
+                sim.step(render=False)
+                # render between steps only if the GUI or an RTX sensor needs it
+                # note: we assume the render interval to be the shortest accepted rendering interval.
+                #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
+                if sim_step_counter % decimation == 0:
+                    sim.render()
+                # update buffers at sim dt
+                scene.update(dt=sim_dt)
 
-        joint_pos_des = curr_jpos_list[sim_step_counter, :] + delta_jpos_list[sim_step_counter, :]
-        print("goal jpos: ", joint_pos_des)
-        jpos_goal_traj.append(joint_pos_des.clone().unsqueeze(0))
+            print("qpos_goal: ", qpos_goal)
+            print("robot qpos: ", robot.data.joint_pos[:, :7])  
+            
+            # robot state obs in np
+            robot_state_obs_sim = get_robot_state_obs(robot, robot_obs_hist)
+            robot_obs_traj_sim.append(robot_state_obs_sim.clone())
 
-        for _ in range(decimation):
-            # apply jpos action
-            robot.set_joint_position_target(joint_pos_des, joint_ids=[0,1,2,3,4,5,6])
+            print(f"robot obs sim at step: {i+1}: ", robot_state_obs_sim)
+            print(f"robot obs real at step: {i+1}: ", robot_obs_traj_real[i, :]) 
 
-            # set actions into simulator
-            scene.write_data_to_sim()
-            # simulate
-            sim.step(render=False)
-            # render between steps only if the GUI or an RTX sensor needs it
-            # note: we assume the render interval to be the shortest accepted rendering interval.
-            #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
-            if sim_step_counter % decimation == 0:
-                sim.render()
-            # update buffers at sim dt
-            scene.update(dt=sim_dt)
+            # pdb.set_trace()  # Debugging breakpoint to inspect variables
+        
+        print("finished running traj")
+        break
+    
+    # import pdb; pdb.set_trace()
+    robot_obs_sim = np.concatenate([t.detach().cpu().numpy() for t in robot_obs_traj_sim], axis=0) 
+    robot_obs_real = np.concatenate([t.detach().cpu().numpy().reshape(1,-1) for t in robot_obs_traj_real], axis=0)
 
-        # import pdb; pdb.set_trace()
-        new_jpos = robot.data.joint_pos[:, :7].clone()
-        print("new jpos sim: ", new_jpos)
-        new_jpos_sim.append(new_jpos)
-
-        print("new jpos real: ", new_jpos_list[sim_step_counter, :])
-        print("jpos diff: ", torch.norm(new_jpos - new_jpos_list[sim_step_counter, :]))
-
-        # import pdb; pdb.set_trace()
-
-        if sim_step_counter == 99:
-            break
-
-        sim_step_counter += 1
-
-    data1 = np.concatenate([t.detach().cpu().numpy() for t in jpos_traj_sim], axis=0)  # shape: (100, 7)
-    data2 = np.concatenate([t.detach().cpu().numpy() for t in jpos_traj_real], axis=0)
-    data3 = np.concatenate([t.detach().cpu().numpy() for t in jpos_goal_traj], axis=0)
-
-    time_steps = np.arange(100)
+    time_steps = np.arange(len(robot_obs_traj_sim))
 
     # Create 7 subplots (one for each joint)
-    fig, axs = plt.subplots(7, 1, figsize=(10, 14), sharex=True)
+    fig, axs = plt.subplots(16, 1, figsize=(10, 14), sharex=True)
 
     # Loop through each joint index (0 to 6)
-    for joint in range(7):
-        axs[joint].plot(time_steps, data1[:, joint], label='sim jpos traj')
-        axs[joint].plot(time_steps, data2[:, joint], label='real jpos traj')
-        axs[joint].plot(time_steps, data3[:, joint], label='goal jpos traj')
-        axs[joint].set_ylabel(f'Joint {joint+1}')
-        if joint == 0:
-            axs[joint].legend(loc='upper right')
+    for dim in range(16):
+        axs[dim].plot(time_steps, robot_obs_sim[:, dim], label='robot_obs_sim')
+        axs[dim].plot(time_steps, robot_obs_real[:, dim], label='robot_obs_real')
+        axs[dim].set_ylabel(f'Dim {dim+1}')
+        if dim == 0:
+            axs[dim].legend(loc='upper right')
             
     axs[-1].set_xlabel('Time Step')
     plt.tight_layout()
@@ -267,6 +269,60 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     #         arr_flat = arr.flatten()  # Flatten in case it's multi-dimensional
     #         line = ' '.join(map(str, arr_flat))
     #         f.write(line + '\n')
+
+def get_robot_state_obs(robot: Articulation, robot_state_hist: HistoryBuffer) -> torch.Tensor:
+    """Get the teleop and robot observations from the robot."""
+
+    robot_state_obs = get_robot_state_b(robot) # reset issues
+    robot_state_hist.append(robot_state_obs)
+    prev_robot_state_obs = robot_state_hist.get_oldest_obs() 
+    relative_robot_state = compute_relative_state(prev_robot_state_obs, robot_state_obs)
+
+    robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
+                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
+                                        -0.5, -0.5, -0.5, # lin vel
+                                        -1.0, -1.0, -1.0, # ang vel
+                                        0.0, # gripper
+                                        ], device='cuda:0').repeat(1, 1) # TODO: check why x is so large
+        
+
+    robot_state_max = torch.tensor([0.1, 0.1, 0.1,  # position
+                                    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
+                                    0.5, 0.5, 0.5, # lin vel
+                                    1.0, 1.0, 1.0, # ang vel
+                                    1.0, # gripper
+                                    ], device='cuda:0').repeat(1, 1) # TODO: check why x is so large
+        
+    standardized_robot_state_obs = (relative_robot_state - robot_state_min) / (robot_state_max - robot_state_min)
+
+    return standardized_robot_state_obs
+
+def get_robot_state_b(robot: Articulation) -> torch.Tensor:
+    curr_state_w = robot.data.body_com_state_w[:,9,:]
+    curr_root_state = robot.data.root_state_w[:]
+
+    # ee pose in base (local) frame
+    curr_ee_pos_b, curr_ee_quat_b = subtract_frame_transforms(
+            curr_root_state[:, 0:3], curr_root_state[:, 3:7], curr_state_w[:, 0:3], curr_state_w[:, 3:7]
+        )
+    # import pdb; pdb.set_trace()
+    curr_orient_6d = quat_to_6d(curr_ee_quat_b)
+    
+    # ee pose in base (local) frame
+    curr_lin_vel_b, _ = subtract_frame_transforms(
+            curr_root_state[:, 7:10], curr_root_state[:, 3:7], curr_state_w[:, 7:10], curr_state_w[:, 3:7]
+        )
+    
+    curr_ang_vel_b, _ = subtract_frame_transforms(
+            curr_root_state[:, 10:13], curr_root_state[:, 3:7], curr_state_w[:, 10:13], curr_state_w[:, 3:7]
+        )
+
+    curr_finger_status = torch.mean(robot.data.joint_pos[:,7:], dim=1).unsqueeze(1)
+    curr_finger_status = (curr_finger_status > 0.2).float() # convert gripper qpos to binary
+
+    curr_robot_state_b = torch.cat((curr_ee_pos_b, curr_orient_6d, curr_lin_vel_b, curr_ang_vel_b, curr_finger_status), dim=-1)
+
+    return curr_robot_state_b
 
 def main():
     """Main function."""
@@ -287,7 +343,7 @@ def main():
     # Set main camera
     sim.set_camera_view([2.5, 2.5, 2.5], [0, 0, 0]) # type: ignore
     # Design scene
-    scene_cfg = FrankaCabinetScene(num_envs=args_cli.num_envs, env_spacing=3.0, replicate_physics=True)
+    scene_cfg = XArmCubeScene(num_envs=args_cli.num_envs, env_spacing=3.0, replicate_physics=True)
     scene = InteractiveScene(scene_cfg)
 
     create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_outer_knuckle")
@@ -300,11 +356,11 @@ def main():
     # Now we are ready!
     print("[INFO]: Setup complete...")
     # Run the simulator
-    run_simulator(sim, scene)
+    run_simulator(sim, scene)  # type: ignore
 
 def create_filter_pairs(prim1: str, prim2: str):
     stage = get_current_stage()
-    filteredpairs_api = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(prim1))
+    filteredpairs_api = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(prim1))  # type: ignore
     filteredpairs_rel = filteredpairs_api.CreateFilteredPairsRel()
     filteredpairs_rel.AddTarget(prim2)
     stage.Save()

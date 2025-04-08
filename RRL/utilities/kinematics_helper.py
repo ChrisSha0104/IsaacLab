@@ -263,5 +263,9 @@ def test_cartesian_vel():
     print("Angular Velocity (rad/s):", angular_vel)
 
 if __name__ == "__main__":
+    kinhelper = KinHelper(robot_name='xarm7', headless=False)
+
+    import pdb; pdb.set_trace()
+
     test_cartesian_vel()
     # test_fk()

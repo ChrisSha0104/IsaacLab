@@ -47,7 +47,7 @@ import os
 
 
 @configclass
-class XArmCubeResidualCamLocalBinaryV3EnvCfg(DirectRLEnvCfg):
+class XArmCubeResidualCamLocalBinaryV4EnvCfg(DirectRLEnvCfg):
     # env 
     episode_length_s = 13.33333 # eps_len_s = traj_len * (dt * decimation)
     decimation = 4
@@ -137,6 +137,7 @@ class XArmCubeResidualCamLocalBinaryV3EnvCfg(DirectRLEnvCfg):
             ),
         },
     )
+    
 
     # cube
     cube = RigidObjectCfg(
@@ -223,7 +224,7 @@ class XArmCubeResidualCamLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     mark_demo = False
     show_camera = True                  # option only used for play
     store_obs = False
-
+    
     # training options:
     learn_std = True
     use_privilege_obs = True
@@ -256,7 +257,7 @@ class XArmCubeResidualCamLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     gripper_height_scale = -10.0
     # contact_force_scale = -0.001 # reduce?
 
-class XArmCubeResidualCamLocalBinaryV3Env(DirectRLEnv):
+class XArmCubeResidualCamLocalBinaryV4Env(DirectRLEnv):
     # pre-physics step calls
     #   |-- _pre_physics_step(action)
     #   |-- _apply_action()
@@ -266,9 +267,9 @@ class XArmCubeResidualCamLocalBinaryV3Env(DirectRLEnv):
     #   |-- _reset_idx(env_ids)
     #   |-- _get_observations()
 
-    cfg: XArmCubeResidualCamLocalBinaryV3EnvCfg
+    cfg: XArmCubeResidualCamLocalBinaryV4EnvCfg
 
-    def __init__(self, cfg: XArmCubeResidualCamLocalBinaryV3EnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: XArmCubeResidualCamLocalBinaryV4EnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         
         if self.cfg.debug_ee or self.cfg.debug_joint_pos or self.cfg.mark_demo or self.cfg.show_demo:

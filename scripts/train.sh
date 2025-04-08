@@ -1,1 +1,1 @@
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-v3 --enable_cameras --headless --num_envs 512 --run_name test_with_clean_demo_jerk_lpf_v3 --max_iterations 2000
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-v3 --enable_cameras --headless --num_envs 512 --run_name deployable_res_rate_tilde0.5 --max_iterations 1000

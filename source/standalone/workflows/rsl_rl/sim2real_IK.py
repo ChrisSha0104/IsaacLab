@@ -41,6 +41,7 @@ import torch
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import AssetBaseCfg
@@ -52,6 +53,7 @@ from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 from omni.isaac.lab.utils.math import subtract_frame_transforms
+from omni.isaac.lab.utils.math import sample_uniform, euler_xyz_from_quat, quat_from_euler_xyz, quat_from_matrix, subtract_frame_transforms, quat_mul, matrix_from_quat
 
 from omni.isaac.lab.assets import Articulation, ArticulationCfg
 from omni.isaac.lab.actuators.actuator_cfg import ImplicitActuatorCfg
@@ -62,6 +64,7 @@ from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 
 from omni.isaac.core.utils.stage import get_current_stage
 from pxr import UsdPhysics, Usd
+from RRL.utilities import *
 
 ##
 # Pre-defined configs
@@ -103,19 +106,19 @@ class FrankaCabinetScene(InteractiveSceneCfg):
                 max_depenetration_velocity=5.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True, solver_position_iteration_count=12, solver_velocity_iteration_count=1
+                enabled_self_collisions=False, solver_position_iteration_count=12, solver_velocity_iteration_count=1
             ),                  
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
-                "joint1": -0.0037,
-                "joint2": -0.781,
-                "joint3": 0.00095,
-                "joint4": 0.5280, # 30
-                "joint5": -0.003766,
-                "joint6": 1.31369, # 75
-                "joint7": -0.0016879,
-                "drive_joint": 0.00625,
+                "joint1": 0.0,
+                "joint2": 0.0,
+                "joint3": 0.0,
+                "joint4": 0.0, # 30
+                "joint5": 0.0,
+                "joint6": 0.0, # 75
+                "joint7": 0.0,
+                "drive_joint": 0.0,
                 "left_finger_joint": 0.0,
                 "left_inner_knuckle_joint": 0.0,
                 "right_outer_knuckle_joint": 0.0,
@@ -166,94 +169,107 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     robot_entity_cfg = SceneEntityCfg("robot", joint_names=["joint.*"], body_names=["xarm_gripper_base_link"]) # TODO: check
     robot_entity_cfg.resolve(scene)
 
+    diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
+    diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=scene.num_envs, device=sim.device)
+    
+    ik_commands = torch.zeros(scene.num_envs, diff_ik_controller.action_dim, device=robot.device)
+    ee_jacobi_idx = robot_entity_cfg.body_ids[0] - 1 # type: ignore
+
+    kin_helper = KinHelper(robot_name='xarm7')
+
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
     decimation = 4
     sim_step_counter = 0
     count = 0
+    traj_length = 50
+
+    # reset robot
+    init_qpos = torch.tensor([[-0.0537, -0.6888, -0.0261,  0.4878, -0.0491,  1.2839, -0.0107, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], device='cuda:0')
+    joint_pos = init_qpos.clone()
+    joint_vel = robot.data.default_joint_vel.clone()
+    robot.write_joint_state_to_sim(joint_pos, joint_vel)
+    robot.reset()
+    
+    # random ee trajectory from start traj
+    init_ee_pos = torch.tensor([[ 0.2644, -0.0247,  0.3620,  0.0126,  0.9982, -0.0229, -0.0542]], device='cuda:0')
+    # end_ee_pos = torch.tensor([[0.4, 0.1, 0.18, 0.707, 0.707, 0.0, 0.0]], device='cuda:0')
+    end_ee_pos = torch.tensor([[0.1, 0.3, 0.64, -0.707, 0.707, 0.0, 0.0]], device='cuda:0')
+
+    ee_traj = interpolate_7d_ee_trajectory(init_ee_pos, end_ee_pos, num_steps=traj_length)
+
+    # reset controller
+    ik_commands = init_ee_pos
+    diff_ik_controller.reset()
+    diff_ik_controller.set_command(ik_commands)
+
+    jpos_diff_ik = []    
+    jpos_sapien = []
 
     # Simulation loop
-    curr_jpos_list = torch.from_numpy(np.loadtxt("/home/shuosha/projects/IsaacLab/RRL/demo_trajs/real_jpos_trajs/curr_jpos.txt")).float()
-    curr_jpos_list = curr_jpos_list.to('cuda:0')[60:, :7]
-    delta_jpos_list = torch.from_numpy(np.loadtxt("/home/shuosha/projects/IsaacLab/RRL/demo_trajs/real_jpos_trajs/delta_jpos.txt")).float()
-    delta_jpos_list = delta_jpos_list.to('cuda:0')[60:, :7]
-    new_jpos_list = torch.from_numpy(np.loadtxt("/home/shuosha/projects/IsaacLab/RRL/demo_trajs/real_jpos_trajs/new_jpos.txt")).float()
-    new_jpos_list = new_jpos_list.to('cuda:0')[60:, :7]
-
-    joint_pos_init = torch.cat((curr_jpos_list[0, :].clone().unsqueeze(0), torch.zeros((1,6)).to('cuda:0')), dim=1)
-    joint_vel_init = robot.data.default_joint_vel.clone()
-
-    robot.write_joint_state_to_sim(joint_pos_init, joint_vel_init)
-    robot.reset()
-    print("done resetting")
-    
-    new_jpos_sim = []
-
-    jpos_traj_sim = []
-    jpos_traj_real = []
-    jpos_goal_traj = []
-
     while simulation_app.is_running(): 
-        # match init pos at every step
-        # joint_pos_init = torch.cat((curr_jpos_list[sim_step_counter, :].clone().unsqueeze(0), torch.zeros((1,6)).to('cuda:0')), dim=1)
-        # joint_vel_init = robot.data.default_joint_vel.clone()
-        # robot.write_joint_state_to_sim(joint_pos_init, joint_vel_init)
-        # robot.reset() 
+        for i in range(traj_length):
+            ee_goal = ee_traj[:, i, :]
+            ik_commands = ee_goal
+            diff_ik_controller.set_command(ik_commands)
 
-        print("curr jpos sim: ", robot.data.joint_pos[:, :7].clone())
-        jpos_traj_sim.append(robot.data.joint_pos[:, :7].clone())
-        print("curr jpos real: ", curr_jpos_list[sim_step_counter, :])
-        jpos_traj_real.append(curr_jpos_list[sim_step_counter, :].clone().unsqueeze(0))
+            # import pdb; pdb.set_trace()
+            jacobian = robot.root_physx_view.get_jacobians()[:, 8, :, robot_entity_cfg.joint_ids]
+            ee_pose_w = robot.data.body_state_w[:, 9, 0:7]
+            root_pose_w = robot.data.root_state_w[:, 0:7]
+            joint_pos = robot.data.joint_pos[:, robot_entity_cfg.joint_ids]
+            # compute frame in root frame
+            ee_pos_b, ee_quat_b = subtract_frame_transforms(
+                root_pose_w[:, 0:3], root_pose_w[:, 3:7], ee_pose_w[:, 0:3], ee_pose_w[:, 3:7]
+            )
 
-        joint_pos_des = curr_jpos_list[sim_step_counter, :] + delta_jpos_list[sim_step_counter, :]
-        print("goal jpos: ", joint_pos_des)
-        jpos_goal_traj.append(joint_pos_des.clone().unsqueeze(0))
+            # compute jpos using ik
+            joint_pos_des = diff_ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
+            print("IK goal: ", ee_goal)
+            print("diff ik soln: ", joint_pos_des)
+            jpos_diff_ik.append(joint_pos_des.clone())
 
-        for _ in range(decimation):
-            # apply jpos action
-            robot.set_joint_position_target(joint_pos_des, joint_ids=[0,1,2,3,4,5,6])
+            r, p, y = euler_xyz_from_quat(ee_goal[:,3:7]) # type: ignore
+            ee_sim = np.concatenate((ee_goal[:, :3].cpu().numpy().reshape(-1,), r.cpu().numpy(), p.cpu().numpy(), y.cpu().numpy())) # type: ignore
+            print("ee_sim", ee_sim)
+            # compute jpos using ik
+            ik_qpos = kin_helper.compute_ik_sapien(joint_pos.cpu().numpy().reshape(-1,), ee_sim.astype(np.float32)) # prev -> curr qpos
+            print("ik_qpos", ik_qpos)
+            jpos_sapien.append(torch.from_numpy(ik_qpos).to(device=sim.device).float())
 
-            # set actions into simulator
-            scene.write_data_to_sim()
-            # simulate
-            sim.step(render=False)
-            # render between steps only if the GUI or an RTX sensor needs it
-            # note: we assume the render interval to be the shortest accepted rendering interval.
-            #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
-            if sim_step_counter % decimation == 0:
-                sim.render()
-            # update buffers at sim dt
-            scene.update(dt=sim_dt)
+            # import pdb; pdb.set_trace()
 
-        # import pdb; pdb.set_trace()
-        new_jpos = robot.data.joint_pos[:, :7].clone()
-        print("new jpos sim: ", new_jpos)
-        new_jpos_sim.append(new_jpos)
+            for _ in range(decimation):
+                # apply jpos action
+                # import pdb; pdb.set_trace()
+                robot.set_joint_position_target(joint_pos_des, joint_ids=[0,1,2,3,4,5,6])
+                # set actions into simulator
+                scene.write_data_to_sim()
+                # simulate
+                sim.step(render=False)
+                # render between steps only if the GUI or an RTX sensor needs it
+                # note: we assume the render interval to be the shortest accepted rendering interval.
+                #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
+                if sim_step_counter % decimation == 0:
+                    sim.render()
+                # update buffers at sim dt
+                scene.update(dt=sim_dt)
+        
+        break
+    
+    # import pdb; pdb.set_trace()
+    data1 = np.concatenate([t.detach().cpu().numpy() for t in jpos_diff_ik], axis=0) 
+    data2 = np.concatenate([t.detach().cpu().numpy().reshape(1,-1) for t in jpos_sapien], axis=0)
 
-        print("new jpos real: ", new_jpos_list[sim_step_counter, :])
-        print("jpos diff: ", torch.norm(new_jpos - new_jpos_list[sim_step_counter, :]))
-
-        # import pdb; pdb.set_trace()
-
-        if sim_step_counter == 99:
-            break
-
-        sim_step_counter += 1
-
-    data1 = np.concatenate([t.detach().cpu().numpy() for t in jpos_traj_sim], axis=0)  # shape: (100, 7)
-    data2 = np.concatenate([t.detach().cpu().numpy() for t in jpos_traj_real], axis=0)
-    data3 = np.concatenate([t.detach().cpu().numpy() for t in jpos_goal_traj], axis=0)
-
-    time_steps = np.arange(100)
+    time_steps = np.arange(traj_length)
 
     # Create 7 subplots (one for each joint)
     fig, axs = plt.subplots(7, 1, figsize=(10, 14), sharex=True)
 
     # Loop through each joint index (0 to 6)
     for joint in range(7):
-        axs[joint].plot(time_steps, data1[:, joint], label='sim jpos traj')
-        axs[joint].plot(time_steps, data2[:, joint], label='real jpos traj')
-        axs[joint].plot(time_steps, data3[:, joint], label='goal jpos traj')
+        axs[joint].plot(time_steps, data1[:, joint], label='differential IK')
+        axs[joint].plot(time_steps, data2[:, joint], label='sapein IK')
         axs[joint].set_ylabel(f'Joint {joint+1}')
         if joint == 0:
             axs[joint].legend(loc='upper right')
@@ -300,11 +316,11 @@ def main():
     # Now we are ready!
     print("[INFO]: Setup complete...")
     # Run the simulator
-    run_simulator(sim, scene)
+    run_simulator(sim, scene)  # type: ignore
 
 def create_filter_pairs(prim1: str, prim2: str):
     stage = get_current_stage()
-    filteredpairs_api = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(prim1))
+    filteredpairs_api = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(prim1)) # type: ignore
     filteredpairs_rel = filteredpairs_api.CreateFilteredPairsRel()
     filteredpairs_rel.AddTarget(prim2)
     stage.Save()
