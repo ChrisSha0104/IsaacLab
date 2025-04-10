@@ -248,13 +248,11 @@ class XArmCubeResidualCamLocalBinaryV3EnvCfg(DirectRLEnvCfg):
 
     # --- auxiliary ---
     residual_penalty_scale = -0.05
-    # action_penalty_scale = -0.3
     ee_rate_scale = -0.2
     residual_rate_scale = -0.1
     velocity_penalty_scale = -0.05
     jerk_penalty_scale = -0.2 # -0.5
     gripper_height_scale = -10.0
-    # contact_force_scale = -0.001 # reduce?
 
 class XArmCubeResidualCamLocalBinaryV3Env(DirectRLEnv):
     # pre-physics step calls
@@ -535,7 +533,7 @@ class XArmCubeResidualCamLocalBinaryV3Env(DirectRLEnv):
 
         joint_pos = self._robot.data.default_joint_pos[env_ids, :] 
         if self.cfg.apply_dmr:
-            print("Applying DMR")
+            # print("Applying DMR")
             joint_pos[:,:7] += sample_uniform( 
                                 -0.125,
                                 0.125,
@@ -905,7 +903,7 @@ class XArmCubeResidualCamLocalBinaryV3Env(DirectRLEnv):
     
     def create_filter_pairs(self, prim1: str, prim2: str):
         stage = get_current_stage()
-        filteredpairs_api = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(prim1))
+        filteredpairs_api = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(prim1)) # type: ignore
         filteredpairs_rel = filteredpairs_api.CreateFilteredPairsRel()
         filteredpairs_rel.AddTarget(prim2)
         stage.Save()

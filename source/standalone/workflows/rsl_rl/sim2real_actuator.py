@@ -173,28 +173,30 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     count = 0
 
     # Simulation loop
-    qpos_traj = torch.from_numpy(np.loadtxt("RRL/sim2real_data/qpos_goal.txt")).float() # without gripper pose
-    qpos_traj = qpos_traj.to('cuda:0')[:, :7]
+    goal_qpos_traj = torch.from_numpy(np.loadtxt("/home/shuosha/projects/IsaacLab/RRL/sim2real_actuator/goal_qpos_traj.txt")).float()
+    goal_qpos_traj = goal_qpos_traj.to('cuda:0')[:, :7]
+    actual_qpos_traj = torch.from_numpy(np.loadtxt("/home/shuosha/projects/IsaacLab/RRL/sim2real_actuator/actual_qpos_traj.txt")).float()
+    actual_qpos_traj = actual_qpos_traj.to('cuda:0')[:, :7]
 
-    joint_pos = qpos_traj[0,:].clone().unsqueeze(0) # (1, 7)
-    joint_pos = torch.cat((joint_pos, torch.zeros((1,6)).to('cuda:0')), dim=1)  # ensure it's a 2D tensor
-    joint_vel = robot.data.default_joint_vel.clone()
-    
-    robot.write_joint_state_to_sim(joint_pos, joint_vel)
+    joint_pos_init = torch.cat((actual_qpos_traj[0, :].clone().unsqueeze(0), torch.zeros((1,6)).to('cuda:0')), dim=1)
+    joint_vel_init = robot.data.default_joint_vel.clone()
+
+    robot.write_joint_state_to_sim(joint_pos_init, joint_vel_init)
     robot.reset()
-    print("initial qpos goal: ", joint_pos[:, :7])
-    print("robot qpos: ", robot.data.joint_pos[:, :7])  
-
-    qpos_sim_list = []
-    qpos_sim_list.append(robot.data.joint_pos[:, :7].clone())
+    print("done resetting")
+    
+    qpos_sim = []
+    qpos_real = []
+    qpos_goal = []
+    traj_length = len(actual_qpos_traj)
 
     while simulation_app.is_running(): 
-        for i in range(1, qpos_traj.shape[0]):
-            qpos_goal = qpos_traj[i, :7].clone() # next qpos goal
-
+        for i in range(traj_length):
+            print("qpos goal: ", goal_qpos_traj[i,:])
+            qpos_goal.append(goal_qpos_traj[i,:].unsqueeze(0).clone())
             for _ in range(decimation):
                 # apply jpos action
-                robot.set_joint_position_target(qpos_goal, joint_ids=[0,1,2,3,4,5,6])
+                robot.set_joint_position_target(goal_qpos_traj[i,:], joint_ids=[0,1,2,3,4,5,6])
 
                 # set actions into simulator
                 scene.write_data_to_sim()
@@ -208,30 +210,29 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
                 # update buffers at sim dt
                 scene.update(dt=sim_dt)
 
-            # import pdb; pdb.set_trace()
-            sim_qpos = robot.data.joint_pos[:, :7].clone()
-            print("new qpos sim: ", sim_qpos)
-            qpos_sim_list.append(sim_qpos.clone())
-
-            print("new qpos real: ", qpos_traj[i, :7])
-            print("qpos diff: ", torch.norm(sim_qpos - qpos_traj[i, :7]))
+            print("qpos sim: ", robot.data.joint_pos[:, :7])
+            qpos_sim.append(robot.data.joint_pos[:, :7].clone())
+            print("qpos real: ", actual_qpos_traj[i, :])
+            qpos_real.append(actual_qpos_traj[i, :].unsqueeze(0).clone())
+            print("qpos diff: ", torch.norm(robot.data.joint_pos[:, :7].clone() - actual_qpos_traj[i, :]))
+            print("-----------------------------------------------")
 
         break
 
-    data1 = np.concatenate([t.detach().cpu().numpy() for t in jpos_traj_sim], axis=0)  # shape: (100, 7)
-    data2 = np.concatenate([t.detach().cpu().numpy() for t in jpos_traj_real], axis=0)
-    data3 = np.concatenate([t.detach().cpu().numpy() for t in jpos_goal_traj], axis=0)
+    qpos_goal_np = np.concatenate([t.detach().cpu().numpy() for t in qpos_goal], axis=0)  # shape: (100, 7)
+    qpos_real_np = np.concatenate([t.detach().cpu().numpy() for t in qpos_real], axis=0)
+    qpos_sim_np = np.concatenate([t.detach().cpu().numpy() for t in qpos_sim], axis=0)
 
-    time_steps = np.arange(100)
+    time_steps = np.arange(traj_length)
 
     # Create 7 subplots (one for each joint)
     fig, axs = plt.subplots(7, 1, figsize=(10, 14), sharex=True)
 
     # Loop through each joint index (0 to 6)
     for joint in range(7):
-        axs[joint].plot(time_steps, data1[:, joint], label='sim jpos traj')
-        axs[joint].plot(time_steps, data2[:, joint], label='real jpos traj')
-        axs[joint].plot(time_steps, data3[:, joint], label='goal jpos traj')
+        axs[joint].plot(time_steps, qpos_goal_np[:, joint], label='goal qpos traj')
+        axs[joint].plot(time_steps, qpos_real_np[:, joint], label='real qpos traj')
+        axs[joint].plot(time_steps, qpos_sim_np[:, joint], label='sim qpos traj')
         axs[joint].set_ylabel(f'Joint {joint+1}')
         if joint == 0:
             axs[joint].legend(loc='upper right')

@@ -205,8 +205,8 @@ class KinHelper():
         # Verify IK using FK
         fk_poses = self.compute_fk_sapien_links(qpos_solutions, [self.sapien_eef_idx])  # FK for all envs
 
-        pose_diff = torch.norm(fk_poses[:, :3, 3] - tf_matrices[:, :3, 3], dim=1)  # (N,)
-        rot_diff = torch.norm(fk_poses[:, :3, :3] - tf_matrices[:, :3, :3], dim=(1, 2))  # (N,)
+        pose_diff = torch.norm(fk_poses[:, :3, 3] - tf_matrices[:, :3, 3], dim=1)  # (N,) # type: ignore
+        rot_diff = torch.norm(fk_poses[:, :3, :3] - tf_matrices[:, :3, :3], dim=(1, 2))  # (N,) # type: ignore
 
         # If pose/rotation difference is too large, return initial_qpos
         invalid_mask = (pose_diff > 0.01) | (rot_diff > 0.01)
@@ -232,6 +232,7 @@ def test_fk():
 
     for i in range(100):
         curr_qpos = init_qpos + (end_qpos - init_qpos) * i / 100
+        import pdb; pdb.set_trace()
         fk = kin_helper.compute_fk_sapien_links(curr_qpos, [kin_helper.sapien_eef_idx])[0]
         fk_euler = transforms3d.euler.mat2euler(fk[:3, :3], axes='sxyz')
 
@@ -246,7 +247,7 @@ def test_fk():
         
 
         init_ik_qpos = ik_qpos.copy()
-        qpos_diff = np.linalg.norm(ik_qpos[:6] - curr_qpos[:6])
+        qpos_diff = np.linalg.norm(ik_qpos[:6] - curr_qpos[:6]) # type: ignore
         if qpos_diff > 0.01:
             warnings.warn('qpos diff too large', RuntimeWarning, stacklevel=2, )
 
@@ -265,7 +266,7 @@ def test_cartesian_vel():
 if __name__ == "__main__":
     kinhelper = KinHelper(robot_name='xarm7', headless=False)
 
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
 
-    test_cartesian_vel()
-    # test_fk()
+    # test_cartesian_vel()
+    test_fk()
