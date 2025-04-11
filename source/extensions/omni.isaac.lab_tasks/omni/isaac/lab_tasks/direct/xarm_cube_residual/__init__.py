@@ -12,8 +12,12 @@ from . import agents
 from .xarm_cube_residual_cam_env_v0 import XArmCubeResidualCamLocalEnv, XArmCubeResidualCamLocalEnvCfg
 from .xarm_cube_residual_cam_env_v1 import XArmCubeResidualCamLocalBinaryEnv, XArmCubeResidualCamLocalBinaryEnvCfg
 from .xarm_cube_residual_cam_env_v2 import XArmCubeResidualCamLocalBinaryNewEnv, XArmCubeResidualCamLocalBinaryNewEnvCfg
-from .xarm_cube_residual_state_env_v2 import XArmCubeResidualStateLocalBinaryNewEnv, XArmCubeResidualStateLocalBinaryNewEnvCfg
 from .xarm_cube_residual_cam_env_v3 import XArmCubeResidualCamLocalBinaryV3Env, XArmCubeResidualCamLocalBinaryV3EnvCfg
+from .xarm_cube_residual_cam_env_v4 import XArmCubeResidualCamLocalBinaryV4Env, XArmCubeResidualCamLocalBinaryV4EnvCfg
+
+from .xarm_cube_residual_state_env_v2 import XArmCubeResidualStateLocalBinaryNewEnv, XArmCubeResidualStateLocalBinaryNewEnvCfg
+from .xarm_cube_residual_state_env_v3 import XArmCubeResidualStateLocalBinaryV3Env, XArmCubeResidualStateLocalBinaryV3EnvCfg
+
 
 ##
 # Register Gym environments.
@@ -68,11 +72,35 @@ gym.register(
 )
 
 gym.register(
-    id="XArm-Residual-Cube-State", #NOTE: v1 + follow ResiP designs (network structures & obs space)
-    entry_point="omni.isaac.lab_tasks.direct.xarm_cube_residual:XArmCubeResidualStateLocalBinaryNewEnv",
+    id="XArm-Residual-Cube-v4", #NOTE: v3 + dmr + 10dim state space
+    entry_point="omni.isaac.lab_tasks.direct.xarm_cube_residual:XArmCubeResidualCamLocalBinaryV4Env",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": XArmCubeResidualStateLocalBinaryNewEnvCfg,
+        "env_cfg_entry_point": XArmCubeResidualCamLocalBinaryV4EnvCfg,
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCamV2Cfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+    },
+)
+
+# gym.register(
+#     id="XArm-Residual-Cube-State", #NOTE: v1 + follow ResiP designs (network structures & obs space)
+#     entry_point="omni.isaac.lab_tasks.direct.xarm_cube_residual:XArmCubeResidualStateLocalBinaryNewEnv",
+#     disable_env_checker=True,
+#     kwargs={
+#         "env_cfg_entry_point": XArmCubeResidualStateLocalBinaryNewEnvCfg,
+#         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+#         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCamV2Cfg",
+#         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+#     },
+# )
+
+gym.register(
+    id="XArm-Residual-Cube-State-v2", #NOTE: (cam v4) + relative_obs + dmr
+    entry_point="omni.isaac.lab_tasks.direct.xarm_cube_residual:XArmCubeResidualStateLocalBinaryV3Env",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": XArmCubeResidualStateLocalBinaryV3EnvCfg,
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCamV2Cfg",
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",

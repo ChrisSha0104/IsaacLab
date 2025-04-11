@@ -27,7 +27,7 @@ parser.add_argument(
 parser.add_argument("--num_envs", type=int, default=10, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 # append RSL-RL cli arguments
-cli_args.add_rsl_rl_args(parser)
+cli_args.add_rsl_rl_args(parser) # type: ignore
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -78,7 +78,7 @@ def main():
     env_cfg = parse_env_cfg(
         args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
-    agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
+    agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli) # type: ignore
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -103,10 +103,10 @@ def main():
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
-        env = multi_agent_to_single_agent(env)
+        env = multi_agent_to_single_agent(env) # type: ignore
 
     # wrap around environment for rsl-rl
-    env = RslRlVecEnvWrapper(env) #NOTE: initial env reset occurs in the initialization of Vectorized Env
+    env = RslRlVecEnvWrapper(env) #NOTE: initial env reset occurs in the initialization of Vectorized Env # type: ignore
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
@@ -162,7 +162,7 @@ def main():
             # env stepping
             obs, rew, dones, extras = env.step(actions)
             if getattr(env.cfg, "show_camera", False): 
-                raw_depth = obs[0,26:].reshape(120,120).detach().cpu().numpy()              # convert to np array
+                raw_depth = obs[0,20:].reshape(120,120).detach().cpu().numpy()              # convert to np array
                 # rotated_depth = cv2.rotate(raw_depth, cv2.ROTATE_90_COUNTERCLOCKWISE)
                 depth_vis = cv2.applyColorMap(cv2.convertScaleAbs(raw_depth, alpha=255 / raw_depth[raw_depth < 15].max().item()), cv2.COLORMAP_JET)
                 depth_vis = cv2.resize(depth_vis,(480,480))

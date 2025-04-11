@@ -1,7 +1,7 @@
 import torch
 
 class HistoryBuffer:
-    def __init__(self, num_envs: int, history_length: int = 10, state_dim: int = 10, device: torch.device = None):
+    def __init__(self, num_envs: int, history_length: int = 10, state_dim: int = 10, device: str = 'cuda:0'):
         """
         Initialize a history buffer as a preallocated tensor of shape (num_envs, history_length, state_dim).
         

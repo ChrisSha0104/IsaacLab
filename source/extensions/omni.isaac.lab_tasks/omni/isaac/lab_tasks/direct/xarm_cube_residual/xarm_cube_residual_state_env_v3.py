@@ -52,8 +52,8 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     episode_length_s = 13.33333 # eps_len_s = traj_len * (dt * decimation)
     decimation = 4
     action_space: int = 10 
-    observation_space = 16 + 10 + 10
-    state_space = 16 + 10 + 10  
+    observation_space = 10 + 10 + 7
+    state_space = 10 + 10 + 7  
     rerender_on_reset = False
 
     # simulation
@@ -174,25 +174,30 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     )
 
     # visualization options:
-    show_demo = True
-    clean_demo = True
+    show_demo = False
+    clean_demo = False
     debug_ee = False
     debug_joint_pos = False
+
+    # visualization
     mark_ee = False
     mark_demo = False
-    show_camera = True                  # option only used for play
+    show_camera = False                  # option only used for play
     store_obs = False
+    use_visual_encoder = False
 
     # training options:
     learn_std = True
     use_privilege_obs = True
-    apply_dmr = False
+    apply_dmr = True
     num_demos = 2
-    state_history_length = 10 # 0.3s ago
+    state_history_length = 50 # 1.5s ago
      # TODO: changed history length
-    use_relative_coordinates = False
-    train_encoder = True
-    
+
+    # dmr scales
+    pos_std = 5e-3
+    rot_std = 1e-3
+
     alpha = 0.2 # residual scale
     tilde = 0.5 # low pass filter
     rel_action_scale = 5
@@ -208,10 +213,10 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
 
     # --- auxiliary ---
     residual_penalty_scale = -0.05
-    ee_rate_scale = -0.2
+    ee_rate_scale = 0.0 #-0.2
     residual_rate_scale = -0.1
-    velocity_penalty_scale = -0.05
-    jerk_penalty_scale = -0.2 # -0.5
+    velocity_penalty_scale = 0.0 #-0.05
+    jerk_penalty_scale = 0.0 # -0.5
     gripper_height_scale = -10.0
 
 class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
@@ -267,7 +272,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self.robot_dof_upper_limits = self._robot.data.soft_joint_pos_limits[0, :, 1].to(device=self.device)
 
         self.robot_position_upper_limits = torch.tensor([[0.65, 0.5, 0.5]], device=self.device)
-        self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.17]], device=self.device)
+        self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.175]], device=self.device)
 
         self.num_eff_joints = self._robot.num_joints - 5
         self.robot_dof_targets = torch.zeros((self.num_envs, self.num_eff_joints), device=self.device)
@@ -281,8 +286,8 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         self.action_list = []
 
-        self.teleop_comm_hist = HistoryBuffer(self.num_envs, self.cfg.state_history_length, self.cfg.action_space, device=self.device) # (num_envs, state_history_length, action_space)
-        self.robot_state_hist = HistoryBuffer(self.num_envs, self.cfg.state_history_length, self.cfg.action_space+6, device=self.device) # (num_envs, state_history_length, action_space+6)
+        self.teleop_comm_hist = HistoryBuffer(self.num_envs, self.cfg.state_history_length, self.cfg.action_space, device=self.device) # (num_envs, state_history_length, action_space) 
+        self.robot_state_hist = HistoryBuffer(self.num_envs, self.cfg.state_history_length, self.cfg.action_space, device=self.device) # (num_envs, state_history_length, action_space+6)
         self.ee_hist = HistoryBuffer(self.num_envs, 3, self.cfg.action_space, device=self.device) # (num_envs, 3, action_space)
 
         # create time-based indexing for demo trajectories
@@ -376,8 +381,16 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         ee_goal_filtered = self.cfg.tilde * self.ee_goal.clone() + (1-self.cfg.tilde) * self.last_ee.clone()
 
+        # if self.cfg.apply_dmr:
+        #     pos_noise = torch.rand((self.num_envs, 3), device=self.device) * self.cfg.pos_std
+        #     rot_noise = torch.rand((self.num_envs, 6), device=self.device) * self.cfg.rot_std
+        #     ee_goal_filtered[:,:3] += pos_noise
+        #     ee_goal_filtered[:,3:9] += rot_noise
+
         ee_goal_filtered[:,:3] = torch.clamp(ee_goal_filtered[:,:3], self.robot_position_lower_limits, self.robot_position_upper_limits)
         ee_goal_filtered[:,-1] = (ee_goal_filtered[:,-1] > 0.5).float()
+
+        # print("ee goal height: ", ee_goal_filtered[:,2])
 
         # print(ee_goal_filtered)
 
@@ -451,7 +464,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             quat = quat_from_6d(self.teleop_comm_obs[:,3:9])
             self.demo_ee_marker.visualize(self.teleop_comm_obs[:, :3] - self.scene.env_origins[:,:3], quat)
 
-        self._camera.update(dt=self.dt)
         return _return
 
     # post-physics step calls 
@@ -464,13 +476,17 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self.finger_joint_dif = self._robot.data.joint_pos[:,7:].max(dim=1).values - self._robot.data.joint_pos[:,7:].min(dim=1).values
 
         terminated = self._robot.data.body_com_state_w[:, 9, 2] < 0.165 #NOTE: 9th body is link_eef
-        terminated |= self.finger_joint_dif > 0.25 #TODO: can't be a termination condition 
+        # print("actual ee height: ", self._robot.data.body_com_state_w[:, 9, 2])
+        terminated |= self.finger_joint_dif > 0.5 #TODO: can't be a termination condition 
 
         # if self.finger_joint_dif > 0.05:
         #     self.cfg.debug_actions = True
         # else:
         #     self.cfg.debug_actions = False
         truncated = self.episode_length_buf >= self.max_episode_length - 1
+
+        # if terminated.any():
+        #     import pdb; pdb.set_trace()
 
         return terminated, truncated
 
@@ -499,14 +515,32 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
                                 self.device,
                             )
             joint_pos = torch.clamp(joint_pos, self.robot_dof_lower_limits, self.robot_dof_upper_limits)
+
+            randomized_stiffness = self._robot.data.default_joint_stiffness[env_ids, :7].clone() * sample_uniform( 
+                                    0.95,
+                                    1.05,
+                                    (len(env_ids), 7),
+                                    self.device,
+                                )
+            randomized_damping = self._robot.data.default_joint_damping[env_ids, :7].clone() * sample_uniform(
+                                    0.95,
+                                    1.05,
+                                    (len(env_ids), 7),
+                                    self.device,
+                                )
+
+            self._robot.write_joint_stiffness_to_sim(randomized_stiffness, [0,1,2,3,4,5,6], env_ids=env_ids)
+            self._robot.write_joint_damping_to_sim(randomized_damping, [0,1,2,3,4,5,6], env_ids=env_ids)                
+        
         joint_vel = torch.zeros_like(joint_pos)
         self._robot.set_joint_position_target(joint_pos, env_ids=env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+        self._robot.reset(env_ids=env_ids)
 
         if self.cfg.clean_demo:
             self.training_demo_traj = self.demo_traj
         else:
-            step_interval = int(torch.randint(20, 31, (1,)).item())
+            step_interval = int(torch.randint(20, 41, (1,)).item())
             noise_level = torch.rand(1).item() * (0.04 - 0.02) + 0.02
             beta_filter = torch.rand(1).item() * (0.7 - 0.5) + 0.5
             self.training_demo_traj = smooth_noisy_trajectory(self.demo_traj, env_ids, step_interval=step_interval, noise_level=noise_level, beta_filter=beta_filter)
@@ -523,7 +557,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self._cube.reset(env_ids)
 
         # controller
-        self.diff_ik_controller.reset(env_ids)
+        self.diff_ik_controller.reset(env_ids) # type: ignore
 
         self.demo_idx[env_ids] = (self.demo_idx[env_ids] + 1) % self.cfg.num_demos 
         self.time_step_per_env[env_ids] = 0
@@ -557,22 +591,23 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         prev_teleop_comm_obs = self.teleop_comm_hist.get_oldest_obs()
         relative_teleop_comm = compute_relative_state(prev_teleop_comm_obs, teleop_comm_obs)
         curr_root_state = self._robot.data.root_state_w[:]
+
         cube_pos_b, cube_quat_b = subtract_frame_transforms(
             curr_root_state[:, 0:3], curr_root_state[:, 3:7], self._cube.data.body_com_state_w[:,0,:3], self._cube.data.body_com_state_w[:,0,3:7]
         )
 
         robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
                                         -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
-                                        -0.5, -0.5, -0.5, # lin vel
-                                        -1.0, -1.0, -1.0, # ang vel
+                                        # -0.5, -0.5, -0.5, # lin vel
+                                        # -1.0, -1.0, -1.0, # ang vel
                                         0.0, # gripper
                                         ], device=self.device).repeat(self.num_envs, 1) # TODO: check why x is so large
         
 
         robot_state_max = torch.tensor([0.1, 0.1, 0.1,  # position
                                         1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
-                                        0.5, 0.5, 0.5, # lin vel
-                                        1.0, 1.0, 1.0, # ang vel
+                                        # 0.5, 0.5, 0.5, # lin vel
+                                        # 1.0, 1.0, 1.0, # ang vel
                                         1.0, # gripper
                                         ], device=self.device).repeat(self.num_envs, 1) # TODO: check why x is so large
         
@@ -624,6 +659,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             ),
             dim=-1,
         )
+        # print("actor obs")
+        # format_tensor(actor_obs)
+        # import pdb; pdb.set_trace()
 
         # self.collected.append(actor_obs.clone()[:,:26])
 
@@ -632,24 +670,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         # print("normalized teleop comm")
         # format_tensor(standardized_teleop_comm_obs)
 
-        if self.cfg.use_privilege_obs:
-            critic_obs = torch.cat(
-                (
-                    standardized_robot_state_obs,
-                    standardized_teleop_comm_obs,
-                    cube_pos_b,
-                    cube_quat_b,
-                    self.demo_idx.unsqueeze(1),
-                    cube_pos_b,
-                    cube_quat_b,
-                ),
-                dim=-1,
-            )
-
-            return {"policy": torch.clamp(actor_obs, -5.0, 5.0),
-                    "critic": torch.clamp(critic_obs, -5.0, 5.0)}
-        else: 
-            return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
+        return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
 
     def _compute_rewards(self):
         # height of the cube
@@ -811,19 +832,19 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         # import pdb; pdb.set_trace()
         curr_orient_6d = quat_to_6d(curr_ee_quat_b)
         
-        # ee pose in base (local) frame
-        curr_lin_vel_b, _ = subtract_frame_transforms(
-                curr_root_state[:, 7:10], curr_root_state[:, 3:7], curr_state_w[:, 7:10], curr_state_w[:, 3:7]
-            )
+        # # ee pose in base (local) frame
+        # curr_lin_vel_b, _ = subtract_frame_transforms(
+        #         curr_root_state[:, 7:10], curr_root_state[:, 3:7], curr_state_w[:, 7:10], curr_state_w[:, 3:7]
+        #     )
         
-        curr_ang_vel_b, _ = subtract_frame_transforms(
-                curr_root_state[:, 10:13], curr_root_state[:, 3:7], curr_state_w[:, 10:13], curr_state_w[:, 3:7]
-            )
+        # curr_ang_vel_b, _ = subtract_frame_transforms(
+        #         curr_root_state[:, 10:13], curr_root_state[:, 3:7], curr_state_w[:, 10:13], curr_state_w[:, 3:7]
+        #     )
 
         curr_finger_status = torch.mean(self._robot.data.joint_pos[:,7:], dim=1).unsqueeze(1)
         curr_finger_status = (curr_finger_status > 0.2).float() # convert gripper qpos to binary
 
-        curr_robot_state_b = torch.cat((curr_ee_pos_b, curr_orient_6d, curr_lin_vel_b, curr_ang_vel_b, curr_finger_status), dim=-1)
+        curr_robot_state_b = torch.cat((curr_ee_pos_b, curr_orient_6d, curr_finger_status), dim=-1)
 
         return curr_robot_state_b
 

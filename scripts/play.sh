@@ -1,1 +1,1 @@
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-v3 --enable_cameras --num_envs 1 --load_run 2025-03-27_22-37-41_deployable_res_rate_tilde0.5 --checkpoint model_300
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-v4 --enable_cameras --num_envs 2 --load_run 2025-04-10_21-46-28_deployable_cam_reduced_obs_cln_depth_histlen_10
