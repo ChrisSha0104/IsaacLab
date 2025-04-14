@@ -136,7 +136,7 @@ def main():
     slowly = False
     
     # turn off dmr during play?
-    apply_dmr = False
+    apply_dmr = True
     setattr(env.cfg, "apply_dmr", apply_dmr) # NOTE: only applies after initial reset!!!
 
     mark_demo = True

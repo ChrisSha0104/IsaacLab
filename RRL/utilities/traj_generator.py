@@ -4,7 +4,8 @@ import os
 from typing import Callable
 import math
 
-from pose_transformations import *
+from .pose_transformations import *
+from typing import Optional, Union, Sequence
 
 """
 methods to visualize / print tensors (trajectories)
@@ -253,8 +254,13 @@ def postprocess_real_demo_trajectory_quat(quat_diff, folder_path):
     
     return trajectory_tensor  # Shape: (1, traj_length, waypoint_dim)
 
-def interpolate_10d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor, num_steps: int) -> torch.Tensor:
-    """
+def interpolate_10d_ee_trajectory(
+    ee_init: torch.Tensor, 
+    ee_final: torch.Tensor, 
+    num_steps: int,
+    env_ids: Optional[Union[Sequence[int], torch.Tensor]] = None
+) -> torch.Tensor:
+    r"""
     Generate a trajectory between initial and final end-effector poses for multiple environments,
     using linear interpolation for position and gripper status and SLERP (via quaternions)
     for orientation.
@@ -266,10 +272,17 @@ def interpolate_10d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor,
         ee_init (torch.Tensor): Initial poses, shape (num_envs, 10).
         ee_final (torch.Tensor): Final poses, shape (num_envs, 10).
         num_steps (int): Number of interpolation steps.
+        env_ids (Optional[Union[Sequence[int], torch.Tensor]]): Indices of environments to interpolate.
+            If None, all environments are used.
     
     Returns:
-        torch.Tensor: Trajectory of shape (num_envs, num_steps, 10)
+        torch.Tensor: Trajectory of shape (num_selected_envs, num_steps, 10)
     """
+    # If env_ids is provided, select only the specified environments.
+    if env_ids is not None:
+        ee_init = ee_init[env_ids]
+        ee_final = ee_final[env_ids]
+    
     if ee_init.shape != ee_final.shape or ee_init.shape[1] != 10:
         raise ValueError("ee_init and ee_final must have the same shape and be (num_envs, 10).")
     
@@ -280,7 +293,7 @@ def interpolate_10d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor,
     
     # ---- Interpolate Position (first 3 dims) ----
     pos_init = ee_init[:, :3]   # shape (num_envs, 3)
-    pos_final = ee_final[:, :3] # shape (num_envs, 3)
+    pos_final = ee_final[:, :3]   # shape (num_envs, 3)
     # (num_envs, 1, 3) broadcast with (1, num_steps, 3)
     pos_traj = pos_init.unsqueeze(1) * (1 - ts.view(1, num_steps, 1)) + pos_final.unsqueeze(1) * ts.view(1, num_steps, 1)
     
@@ -303,7 +316,7 @@ def interpolate_10d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor,
     
     # ---- Interpolate Gripper Status (last dim) ----
     grip_init = ee_init[:, 9:]   # shape (num_envs, 1)
-    grip_final = ee_final[:, 9:]  # shape (num_envs, 1)
+    grip_final = ee_final[:, 9:]   # shape (num_envs, 1)
     grip_traj = grip_init.unsqueeze(1) * (1 - ts.view(1, num_steps, 1)) + grip_final.unsqueeze(1) * ts.view(1, num_steps, 1)
     
     # ---- Concatenate all components ----
@@ -313,6 +326,67 @@ def interpolate_10d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor,
     trajectory = torch.cat([pos_traj, orient6d_traj, grip_traj], dim=-1)  # (num_envs, num_steps, 10)
     
     return trajectory
+
+# def interpolate_10d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor, num_steps: int) -> torch.Tensor:
+#     """
+#     Generate a trajectory between initial and final end-effector poses for multiple environments,
+#     using linear interpolation for position and gripper status and SLERP (via quaternions)
+#     for orientation.
+    
+#     Each end-effector pose is defined as:
+#         [position (3D), orientation (6D), gripper_status (1D)] = total 10D.
+    
+#     Args:
+#         ee_init (torch.Tensor): Initial poses, shape (num_envs, 10).
+#         ee_final (torch.Tensor): Final poses, shape (num_envs, 10).
+#         num_steps (int): Number of interpolation steps.
+    
+#     Returns:
+#         torch.Tensor: Trajectory of shape (num_envs, num_steps, 10)
+#     """
+#     if ee_init.shape != ee_final.shape or ee_init.shape[1] != 10:
+#         raise ValueError("ee_init and ee_final must have the same shape and be (num_envs, 10).")
+    
+#     num_envs = ee_init.shape[0]
+    
+#     # Create interpolation factors: shape (num_steps,)
+#     ts = torch.linspace(0, 1, steps=num_steps, device=ee_init.device, dtype=ee_init.dtype)
+    
+#     # ---- Interpolate Position (first 3 dims) ----
+#     pos_init = ee_init[:, :3]   # shape (num_envs, 3)
+#     pos_final = ee_final[:, :3] # shape (num_envs, 3)
+#     # (num_envs, 1, 3) broadcast with (1, num_steps, 3)
+#     pos_traj = pos_init.unsqueeze(1) * (1 - ts.view(1, num_steps, 1)) + pos_final.unsqueeze(1) * ts.view(1, num_steps, 1)
+    
+#     # ---- Interpolate Orientation (next 6 dims) using SLERP ----
+#     orient6d_init = ee_init[:, 3:9]   # shape (num_envs, 6)
+#     orient6d_final = ee_final[:, 3:9]   # shape (num_envs, 6)
+    
+#     # Convert 6D representations to quaternions (assumed functions).
+#     q_init = quat_from_6d(orient6d_init)   # shape (num_envs, 4)
+#     q_final = quat_from_6d(orient6d_final)   # shape (num_envs, 4)
+    
+#     # Perform batched SLERP.
+#     q_traj = slerp_batch(q_init, q_final, ts)  # shape (num_envs, num_steps, 4)
+    
+#     # Convert interpolated quaternions back to 6D.
+#     B, T, _ = q_traj.shape
+#     q_traj_flat = q_traj.reshape(B * T, 4)
+#     orient6d_traj_flat = quat_to_6d(q_traj_flat)  # shape (B*T, 6)
+#     orient6d_traj = orient6d_traj_flat.reshape(B, T, 6)
+    
+#     # ---- Interpolate Gripper Status (last dim) ----
+#     grip_init = ee_init[:, 9:]   # shape (num_envs, 1)
+#     grip_final = ee_final[:, 9:]  # shape (num_envs, 1)
+#     grip_traj = grip_init.unsqueeze(1) * (1 - ts.view(1, num_steps, 1)) + grip_final.unsqueeze(1) * ts.view(1, num_steps, 1)
+    
+#     # ---- Concatenate all components ----
+#     # pos_traj: (num_envs, num_steps, 3)
+#     # orient6d_traj: (num_envs, num_steps, 6)
+#     # grip_traj: (num_envs, num_steps, 1)
+#     trajectory = torch.cat([pos_traj, orient6d_traj, grip_traj], dim=-1)  # (num_envs, num_steps, 10)
+    
+#     return trajectory
 
 def interpolate_7d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor, num_steps: int) -> torch.Tensor:
     """
@@ -396,6 +470,7 @@ def smooth_noisy_trajectory(trajectory, env_ids, step_interval=10, noise_level=0
 def add_noise_to_nodes(trajectory, env_ids, step_interval=10, noise_level=0.01, beta_filter=0.7):
     """
     Add normal noise to the trajectory at every `step_interval` step for specified environments.
+    Skip adding noise at time step 0.
 
     Args:
         trajectory (torch.Tensor): Original trajectory of shape (num_envs, time_step, action_dim).
@@ -411,17 +486,19 @@ def add_noise_to_nodes(trajectory, env_ids, step_interval=10, noise_level=0.01, 
     num_envs, time_step, action_dim = trajectory.shape
     device = trajectory.device
 
-    # Steps where noise is added
+    # Steps where noise is added: this includes 0
     noised_steps = torch.arange(0, time_step, step_interval, device=device)
 
     # Extract nodes at noised steps
-    noised_nodes = trajectory[:, noised_steps, :].clone() # (num_envs, num_noised_steps, action_dim)
+    noised_nodes = trajectory[:, noised_steps, :].clone()  # (num_envs, num_noised_steps, action_dim)
 
     # Residual noise buffer
     act_residual = torch.zeros((num_envs, action_dim), dtype=trajectory.dtype, device=device)
 
-    # Apply noise to specified environments
-    for i in range(len(noised_steps)):
+    # Apply noise to specified environments, but skip the first step.
+    for i, step in enumerate(noised_steps):
+        if step.item() == 0:
+            continue  # Skip noise addition at time step 0
         noise_sample = torch.normal(0, noise_level, (len(env_ids), action_dim), device=device)
         act_residual[env_ids] = beta_filter * noise_sample + (1 - beta_filter) * act_residual[env_ids]
         noised_nodes[env_ids, i, :] += act_residual[env_ids]

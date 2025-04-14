@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from omni.isaac.lab.utils.math import sample_uniform, euler_xyz_from_quat, quat_from_euler_xyz, quat_from_matrix, subtract_frame_transforms, quat_mul, matrix_from_quat
+from omni.isaac.lab.utils.math import sample_uniform, euler_xyz_from_quat, quat_from_euler_xyz, quat_from_matrix, subtract_frame_transforms, combine_frame_transforms, quat_mul, matrix_from_quat
 import os
 from typing import Callable
 import math
@@ -361,6 +361,100 @@ def gripper_real2sim(real_gripper_status: float) -> float:
     
 #     return q_interp
 
+def subtract_frame_transforms_10D(p1: torch.Tensor, p2: torch.Tensor) -> torch.Tensor:
+    """
+    args:
+        p1: coordinate frame of p1 in f0, shape (num_envs, 10)
+        p2: coordiante frame of p2 in f0, shape (num_envs, 10)
+    return:
+        p2_in_p1: coordinate frame of p2 in p1 frame, shape (num_envs, 10)
+    """
+
+    pos1 = p1[:,:3]
+    pos2 = p2[:,:3]
+
+    quat1 = quat_from_6d(p1[:, 3:9])
+    quat2 = quat_from_6d(p2[:, 3:9])
+
+    pos_2in1, quat_2in1 = subtract_frame_transforms(pos1, quat1, pos2, quat2)
+    orient_6D_2in1 = quat_to_6d(quat_2in1)
+
+    p2_in_p1 = torch.cat([pos_2in1, orient_6D_2in1, p2[:,-1:]], dim=-1)
+    return p2_in_p1
+
+def combine_frame_transforms_10D(p10: torch.Tensor, p21: torch.Tensor) -> torch.Tensor:
+    """
+    args:
+        p10: coordinate frame of f1 in f0, shape (num_envs, 10)
+        p21: coordiante frame of f2 in f1, shape (num_envs, 10)
+    return:
+        p20: coordinate frame of f2 in f0 frame, shape (num_envs, 10)
+    """
+
+    pos1 = p10[:,:3]
+    pos2 = p21[:,:3]
+
+    quat1 = quat_from_6d(p10[:, 3:9])
+    quat2 = quat_from_6d(p21[:, 3:9])
+
+    pos20, quat20 = combine_frame_transforms(pos1, quat1, pos2, quat2)
+    orient_6D_20 = quat_to_6d(quat20)
+
+    p20 = torch.cat([pos20, orient_6D_20, p21[:,-1:]], dim=-1)
+
+    return p20
+
+
+def ee_7D_to_10D(ee_7D: torch.Tensor) -> torch.Tensor:
+    """
+    args:
+        ee 7D
+    return:
+        ee 10D
+    """
+    if ee_7D.shape[1] != 7:
+        raise ValueError("Input poses must be 7D.")
+
+    position = ee_7D[:, :3]
+    quat = ee_7D[:, 3:7]
+
+    orient_6D = quat_to_6d(quat)
+    return torch.cat([position, orient_6D], dim=-1)
+
+def ee_8D_to_10D(ee_8D: torch.Tensor) -> torch.Tensor:
+    """
+    args:
+        ee 8D
+    return:
+        ee 10D
+    """
+    if ee_8D.shape[1] != 8:
+        raise ValueError("Input poses must be 8D.")
+
+    position = ee_8D[:, :3]
+    quat = ee_8D[:, 3:7]
+    gripper = ee_8D[:,-1:]
+
+    orient_6D = quat_to_6d(quat)
+    return torch.cat([position, orient_6D, gripper], dim=-1)
+
+def ee_10D_to_8D(ee_10D: torch.Tensor) -> torch.Tensor:
+    """
+    args:
+        ee 10D
+    return:
+        ee 8D
+    """
+    if ee_10D.shape[1] != 10:
+        raise ValueError("Input poses must be 10D.")
+
+    position = ee_10D[:, :3]
+    orient_6D = ee_10D[:, 3:9]
+    gripper = ee_10D[:,-1:]
+
+    quat = quat_from_6d(orient_6D)
+    return torch.cat([position, quat, gripper], dim=-1)
+
 def compute_relative_state(prev_state: torch.Tensor, curr_state: torch.Tensor) -> torch.Tensor:
     """
     Compute the relative robot state (current state expressed in the previous state's frame).
@@ -454,7 +548,7 @@ def compute_relative_state(prev_state: torch.Tensor, curr_state: torch.Tensor) -
 
     return rel_state
 
-def convex_combination_10D_poses(p1: torch.Tensor, p2: torch.Tensor, alpha: float) -> torch.Tensor:
+def convex_combination_10D_poses(p1: torch.Tensor, p2: torch.Tensor, alpha: float = 1.0) -> torch.Tensor:
     """
     Compute a convex combination of two 10D poses by p1 * (1 - alpha) + p2 * alpha, i.e., alpha = 0 gives p1 and alpha = 1 gives p2.
     Args:
@@ -488,6 +582,32 @@ def convex_combination_10D_poses(p1: torch.Tensor, p2: torch.Tensor, alpha: floa
     # 4. Concatenate the interpolated parts into a new 10D pose:
     #    [position (3), orientation (6), gripper status (1)]
     return torch.cat([pos_combined, orient_combined, gripper_combined], dim=1)
+
+def linear_combination_10D_poses(p1: torch.Tensor, p2: torch.Tensor) -> torch.Tensor:
+    if p1.shape != p2.shape:
+        raise ValueError("p1 and p2 must have the same shape.")
+    if p1.shape[1] != 10:
+        raise ValueError("Input poses must be 10D.")
+    # Interpolate position
+    pos1 = p1[:, :3]
+    pos2 = p2[:, :3]
+    pos_combined = pos1 + pos2 
+
+    # Interpolate orientation using SLERP
+    q1 = quat_from_6d(p1[:, 3:9])
+    q2 = quat_from_6d(p2[:, 3:9])
+
+    q_interp = slerp(q1, q2, 0.5)
+    orient_combined = quat_to_6d(q_interp)
+    
+    # Interpolate gripper status
+    gripper1 = p1[:, 9:10]
+    gripper2 = p2[:, 9:10]
+    gripper_combined = gripper1 + gripper2
+    
+    # 4. Concatenate the interpolated parts into a new 10D pose:
+    #    [position (3), orientation (6), gripper status (1)]
+    return torch.cat([pos_combined, orient_combined, gripper_combined], dim=-1)
 
 
 def plot_interpolation(quaternions, method_name, ax):
