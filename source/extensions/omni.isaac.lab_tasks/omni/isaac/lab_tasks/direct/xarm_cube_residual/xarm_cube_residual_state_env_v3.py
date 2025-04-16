@@ -411,9 +411,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
                 quat = quat_from_6d(ee_goal_filtered[:,3:9])
                 self.ee_goal_marker.visualize(ee_goal_filtered[:,:3] + self.scene.env_origins[:,:3], quat)          
 
-        # print("gripper status")
-        # format_tensor(ee_goal_filtered[:,7])
-        # import pdb; pdb.set_trace()
         self.joint_pos = self.get_joint_pos_from_ee_pos_10d(self.diff_ik_controller, ee_goal_filtered)                           # ee_goal always abs coordinates
         self.robot_dof_targets[:] = torch.clamp(self.joint_pos, self.robot_dof_lower_limits[:8], self.robot_dof_upper_limits[:8])   # (num_envs, 8)
         # print("robot joint targets")

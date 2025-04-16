@@ -327,67 +327,6 @@ def interpolate_10d_ee_trajectory(
     
     return trajectory
 
-# def interpolate_10d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor, num_steps: int) -> torch.Tensor:
-#     """
-#     Generate a trajectory between initial and final end-effector poses for multiple environments,
-#     using linear interpolation for position and gripper status and SLERP (via quaternions)
-#     for orientation.
-    
-#     Each end-effector pose is defined as:
-#         [position (3D), orientation (6D), gripper_status (1D)] = total 10D.
-    
-#     Args:
-#         ee_init (torch.Tensor): Initial poses, shape (num_envs, 10).
-#         ee_final (torch.Tensor): Final poses, shape (num_envs, 10).
-#         num_steps (int): Number of interpolation steps.
-    
-#     Returns:
-#         torch.Tensor: Trajectory of shape (num_envs, num_steps, 10)
-#     """
-#     if ee_init.shape != ee_final.shape or ee_init.shape[1] != 10:
-#         raise ValueError("ee_init and ee_final must have the same shape and be (num_envs, 10).")
-    
-#     num_envs = ee_init.shape[0]
-    
-#     # Create interpolation factors: shape (num_steps,)
-#     ts = torch.linspace(0, 1, steps=num_steps, device=ee_init.device, dtype=ee_init.dtype)
-    
-#     # ---- Interpolate Position (first 3 dims) ----
-#     pos_init = ee_init[:, :3]   # shape (num_envs, 3)
-#     pos_final = ee_final[:, :3] # shape (num_envs, 3)
-#     # (num_envs, 1, 3) broadcast with (1, num_steps, 3)
-#     pos_traj = pos_init.unsqueeze(1) * (1 - ts.view(1, num_steps, 1)) + pos_final.unsqueeze(1) * ts.view(1, num_steps, 1)
-    
-#     # ---- Interpolate Orientation (next 6 dims) using SLERP ----
-#     orient6d_init = ee_init[:, 3:9]   # shape (num_envs, 6)
-#     orient6d_final = ee_final[:, 3:9]   # shape (num_envs, 6)
-    
-#     # Convert 6D representations to quaternions (assumed functions).
-#     q_init = quat_from_6d(orient6d_init)   # shape (num_envs, 4)
-#     q_final = quat_from_6d(orient6d_final)   # shape (num_envs, 4)
-    
-#     # Perform batched SLERP.
-#     q_traj = slerp_batch(q_init, q_final, ts)  # shape (num_envs, num_steps, 4)
-    
-#     # Convert interpolated quaternions back to 6D.
-#     B, T, _ = q_traj.shape
-#     q_traj_flat = q_traj.reshape(B * T, 4)
-#     orient6d_traj_flat = quat_to_6d(q_traj_flat)  # shape (B*T, 6)
-#     orient6d_traj = orient6d_traj_flat.reshape(B, T, 6)
-    
-#     # ---- Interpolate Gripper Status (last dim) ----
-#     grip_init = ee_init[:, 9:]   # shape (num_envs, 1)
-#     grip_final = ee_final[:, 9:]  # shape (num_envs, 1)
-#     grip_traj = grip_init.unsqueeze(1) * (1 - ts.view(1, num_steps, 1)) + grip_final.unsqueeze(1) * ts.view(1, num_steps, 1)
-    
-#     # ---- Concatenate all components ----
-#     # pos_traj: (num_envs, num_steps, 3)
-#     # orient6d_traj: (num_envs, num_steps, 6)
-#     # grip_traj: (num_envs, num_steps, 1)
-#     trajectory = torch.cat([pos_traj, orient6d_traj, grip_traj], dim=-1)  # (num_envs, num_steps, 10)
-    
-#     return trajectory
-
 def interpolate_7d_ee_trajectory(ee_init: torch.Tensor, ee_final: torch.Tensor, num_steps: int) -> torch.Tensor:
     """
     Generate a trajectory between initial and final end-effector poses for multiple environments,
@@ -677,3 +616,96 @@ def subtract_z_in_baseframe_batch(ee_pose, z_offset=0.15):
     new_position = position + displacement_ee  # (num_envs, 3)
     
     return new_position
+
+### Helpers for transferring trajectories between real and sim
+
+def save_to_txt(data, filename):
+    """
+    Save list of numpy arrays or torch tensors to a txt file, one element per line.
+    
+    Args:
+        data (list[np.ndarray] | list[torch.Tensor] | torch.Tensor): Input data to save.
+        filename (str): Output file path.
+    """
+    with open(filename, 'w') as f:
+        # Convert PyTorch tensor to numpy
+        if isinstance(data, torch.Tensor):
+            data = data.detach().cpu().numpy()
+
+        # If it's a single ndarray, wrap in a list for consistency
+        if isinstance(data, np.ndarray) and data.ndim == 1:
+            data = data.reshape(-1, 1)
+
+        # Handle list of arrays/tensors
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, torch.Tensor):
+                    item = item.detach().cpu().numpy()
+                if isinstance(item, np.ndarray):
+                    item = item.flatten()
+                    for val in item:
+                        f.write(f"{val}\n")
+        elif isinstance(data, np.ndarray):
+            for row in data:
+                row = np.atleast_1d(row)
+                for val in row:
+                    f.write(f"{val}\n")
+        else:
+            raise TypeError("Input must be a list of arrays/tensors or a tensor/ndarray.")
+        
+def load_from_txt(filename, return_type='numpy'):
+    """
+    Load a .txt file into a numpy array or torch tensor.
+
+    Each line in the file is expected to be a list of space or comma-separated numbers.
+
+    Args:
+        filename (str): Path to the .txt file.
+        return_type (str): 'numpy' or 'torch' to specify output format.
+
+    Returns:
+        np.ndarray or torch.Tensor: Loaded data of shape (num_lines, elements_per_line)
+    """
+    data = []
+    with open(filename, 'r') as f:
+        for line in f:
+            # Strip whitespace and split by space or comma
+            line = line.strip()
+            if not line:
+                continue  # skip empty lines
+            # Try splitting by comma first, then fallback to whitespace
+            if ',' in line:
+                elements = line.split(',')
+            else:
+                elements = line.split()
+            # Convert strings to floats
+            data.append([float(x) for x in elements])
+
+    array = np.array(data)
+
+    if return_type == 'numpy':
+        return array
+    elif return_type == 'torch':
+        return torch.tensor(array, dtype=torch.float32)
+    else:
+        raise ValueError("return_type must be 'numpy' or 'torch'")
+    
+def torch_action_to_numpy(action_tensor: torch.Tensor) -> np.ndarray:
+    """
+    Convert a torch tensor of shape (1, action_dim) to a numpy array of shape (action_dim,).
+
+    Automatically moves to CPU and detaches if necessary.
+    """
+    if not isinstance(action_tensor, torch.Tensor):
+        raise TypeError("Expected torch.Tensor")
+
+    return action_tensor.detach().cpu().numpy().reshape(-1)
+
+def numpy_action_to_torch(action_array: np.ndarray, device: torch.device = torch.device('cpu')) -> torch.Tensor:
+    """
+    Convert a numpy array of shape (action_dim,) to a torch tensor of shape (1, action_dim), placed on the specified device.
+    """
+    if not isinstance(action_array, np.ndarray):
+        raise TypeError("Expected np.ndarray")
+
+    return torch.tensor(action_array, dtype=torch.float32, device=device).unsqueeze(0)
