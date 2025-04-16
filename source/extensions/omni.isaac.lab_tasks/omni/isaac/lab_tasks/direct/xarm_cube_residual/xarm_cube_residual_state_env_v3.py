@@ -176,11 +176,10 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     # visualization options: (All turned to false during training)
     play_training_demo = False
     play_real_demo = False
-    add_noise_to_demo = True
     mark_ee_abs = False
     mark_demo_abs = False
     show_camera = False                  # option only used for play
-    mark_obs = True
+    mark_obs = False
 
     # debug options
     debug_ee = False
@@ -188,12 +187,13 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     store_obs = False
 
     # training options:
+    add_noise_to_demo = True
     use_visual_encoder = False
     learn_std = True
     use_privilege_obs = True
     apply_dmr = False
     num_demos = 2 # TODO change to 3
-    state_history_length = 50 # 1.5s ago # TODO change to 10
+    state_history_length = 10 # 1.5s ago # TODO change to 10
 
     # parameters
     pos_std = 5e-3 # dmr scales
@@ -406,7 +406,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
                 print("ee goal")
                 format_tensor(ee_goal_filtered)
                 print("current ee")
-                format_tensor(self.get_curr_waypoint_b())
+                format_tensor(self.get_robot_state_b())
         if self.cfg.mark_ee_abs:
                 quat = quat_from_6d(ee_goal_filtered[:,3:9])
                 self.ee_goal_marker.visualize(ee_goal_filtered[:,:3] + self.scene.env_origins[:,:3], quat)          
@@ -489,9 +489,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         # truncated = self.time_step_per_env >= self.traj_length - 1
 
-        # if terminated.any():
-        #     import pdb; pdb.set_trace()
-
         return terminated, truncated
 
     def _get_rewards(self) -> torch.Tensor:
@@ -553,14 +550,13 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self._robot.reset(env_ids=env_ids)
 
         # update initial pose of demo trajs
-        # if self.cfg.apply_dmr:
-        #     # import pdb; pdb.set_trace()
-        #     # ee after dmr
-        #     initial_ee = self.get_curr_waypoint_b().clone()
-        #     # interpolated from randomized ee to demo traj
-        #     initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.demo_traj[env_ids, self.demo_idx[env_ids], 20, :], 20, env_ids) # (env_ids, 1, 50, 10)
-        #     # fill in initial traj
-        #     self.demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
+        if self.cfg.apply_dmr:
+            # ee after dmr
+            initial_ee = self.get_robot_state_b().clone()
+            # interpolated from randomized ee to demo traj
+            initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.demo_traj[env_ids, self.demo_idx[env_ids], 20, :], 20, env_ids) # (env_ids, 1, 50, 10)
+            # fill in initial traj
+            self.demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
         
         # add noise to demo traj
         if not self.cfg.add_noise_to_demo:
@@ -600,7 +596,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         curr_teleop_comm_b = self.teleop_comm_obs.clone()
         self.curr_comm_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, curr_teleop_comm_b)
-        print("curr comm in curr ee fr: ", self.curr_comm_in_curr_ee_fr)
+        # print("curr comm in curr ee fr: ", self.curr_comm_in_curr_ee_fr)
 
         cube_8D_w = self._robot.data.root_state_w[:]
         cube_pos_b, cube_quat_b = subtract_frame_transforms(
@@ -624,45 +620,45 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             self.marker2.visualize(self.ee_goal_b[:,:3], ee_10D_to_8D(self.ee_goal_b)[:,3:7])
             self.marker3.visualize(cube_7D_b[:,:3], cube_7D_b[:,3:7])
 
-        robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
-                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
-                                        0.0, # gripper
-                                        ], device=self.device).repeat(self.num_envs, 1) 
+        # robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
+        #                                 -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
+        #                                 0.0, # gripper
+        #                                 ], device=self.device).repeat(self.num_envs, 1) 
         
 
-        robot_state_max = torch.tensor([0.1, 0.1, 0.1,  # position
-                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
-                                        1.0, # gripper
-                                        ], device=self.device).repeat(self.num_envs, 1) 
+        # robot_state_max = torch.tensor([0.1, 0.1, 0.1,  # position
+        #                                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
+        #                                 1.0, # gripper
+        #                                 ], device=self.device).repeat(self.num_envs, 1) 
         
-        teleop_comm_min = torch.tensor([-0.05, -0.05, -0.05,  # position
-                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
-                                        0.0, # gripper
-                                        ], device=self.device).repeat(self.num_envs, 1) 
+        # teleop_comm_min = torch.tensor([-0.1, -0.1, -0.1,  # position
+        #                                 -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
+        #                                 0.0, # gripper
+        #                                 ], device=self.device).repeat(self.num_envs, 1) 
         
 
-        teleop_comm_max = torch.tensor([0.05, 0.05, 0.05,  # position
-                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
-                                        1.0, # gripper
-                                        ], device=self.device).repeat(self.num_envs, 1) 
+        # teleop_comm_max = torch.tensor([0.1, 0.1, 0.1,  # position
+        #                                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
+        #                                 1.0, # gripper
+        #                                 ], device=self.device).repeat(self.num_envs, 1) 
 
-        cube_state_min = torch.tensor([-0.1, -0.1, -0.0,  # position
-                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation
-                                        ], device=self.device).repeat(self.num_envs, 1)
+        # cube_state_min = torch.tensor([-0.1, -0.1, -0.0,  # position
+        #                                 -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation
+        #                                 ], device=self.device).repeat(self.num_envs, 1)
         
-        cube_state_max = torch.tensor([0.2, 0.1, 0.5,  # position
-                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation
-                                        ], device=self.device).repeat(self.num_envs, 1)
+        # cube_state_max = torch.tensor([0.2, 0.1, 0.5,  # position
+        #                                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation
+        #                                 ], device=self.device).repeat(self.num_envs, 1)
                                         
-        normalized_robot_state_obs = (prev_ee_in_curr_ee_fr - robot_state_min) / (robot_state_max - robot_state_min)
-        normalized_teleop_comm_obs = (self.curr_comm_in_curr_ee_fr - teleop_comm_min) / (teleop_comm_max - teleop_comm_min)
-        normalized_cube_pose_obs = (cube_pose_in_curr_ee_fr - cube_state_min) / (cube_state_max - cube_state_min)
+        # normalized_robot_state_obs = (prev_ee_in_curr_ee_fr - robot_state_min) / (robot_state_max - robot_state_min)
+        # normalized_teleop_comm_obs = (self.curr_comm_in_curr_ee_fr - teleop_comm_min) / (teleop_comm_max - teleop_comm_min)
+        # normalized_cube_pose_obs = (cube_pose_in_curr_ee_fr - cube_state_min) / (cube_state_max - cube_state_min)
 
         actor_obs = torch.cat(
             (
-                normalized_robot_state_obs,
-                normalized_teleop_comm_obs,
-                normalized_cube_pose_obs,
+                prev_ee_in_curr_ee_fr,
+                self.curr_comm_in_curr_ee_fr.clone(),
+                cube_pose_in_curr_ee_fr,
             ),
             dim=-1,
         )
@@ -735,9 +731,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         # print("jerk", jerk)
 
         gripper_height = torch.where(self.ee_goal_b[:,2] < 0.17, 1.0, 0.0)
-        # print(self.ee_goal_b[:,2])
-
-        overgrasp = (self.finger_joint_dif > 0.05) * self.ee_goal_b[:,7]
 
         # gripper closing reward
         closing_gripper = torch.exp(self._robot.data.joint_pos[:, 7]).clamp(0.0,50.0)
@@ -746,15 +739,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         # completion reward at end of episode
         completion_condition = (self._cube.data.root_pos_w[:, 2] > 0.15) & (self.episode_length_buf >= self.max_episode_length - 1 - 75) # reward for completion in the last 75 time steps!
         completion = torch.where(completion_condition, 1.0, 0.0)
-        # print("completion", completion)
 
         # velocity penalty
         velocity_penalty = torch.norm(self._robot.data.body_com_state_w[:,9,7:13], p=2, dim=1)
-
-        # print(self.cfg.velocity_penalty_scale * velocity_penalty)
-
-        # link_incoming_forces = self._robot.root_physx_view.get_link_incoming_joint_force()[:, -6:, :3] # forces in gripper frame
-        # contact_force = torch.norm((link_incoming_forces[:, -2, :3] + link_incoming_forces[:, -3, :3]), dim=-1)  # NOTE: proper grasp has values around 0.1
 
         rewards = (
             + self.cfg.height_reward_scale * height_reward
@@ -771,14 +758,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             # + self.cfg.overgrasp * overgrasp
             # + self.cfg.closing_gripper * closing_gripper
         )
-
-        # print("jerk", jerk)
-        # print("ee rate", delta_ee)
-        # print("velocity penalty", velocity_penalty)
-
-        # rewards = torch.where(self._cube.data.root_pos_w[:, 2] > 0.05, rewards + 0.25, rewards)
-        # rewards = torch.where(self._cube.data.root_pos_w[:, 2] > 0.1, rewards + 0.25, rewards)
-        # rewards = torch.where(self._cube.data.root_pos_w[:, 2] > 0.15, rewards + 1.0, rewards)
 
         self.extras["log"] = {
             "height_reward": (self.cfg.height_reward_scale * height_reward).mean(),
@@ -806,26 +785,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         filteredpairs_rel.AddTarget(prim2)
         stage.Save()
     
-    def get_curr_waypoint_b(self):
-        # ee and root pose in world frame
-        curr_ee_pos_w = self._robot.data.body_com_state_w[:,9,0:7]
-        curr_root_pos_w = self._robot.data.root_state_w[:, 0:7]
-
-        # import pdb; pdb.set_trace()
-
-        # ee pos in base (local) frame
-        curr_ee_pos_b, curr_ee_quat_b = subtract_frame_transforms(
-                curr_root_pos_w[:, 0:3], curr_root_pos_w[:, 3:7], curr_ee_pos_w[:, 0:3], curr_ee_pos_w[:, 3:7]
-            )
-        curr_orient_6d = quat_to_6d(curr_ee_quat_b)
-        
-        # finger status
-        curr_finger_status = torch.mean(self._robot.data.joint_pos[:,7:], dim=1).unsqueeze(1)
-        curr_finger_status = (curr_finger_status > 0.2).float() # convert gripper qpos to binary
-        
-        curr_ee_pos_combined_b = torch.cat((curr_ee_pos_b, curr_orient_6d, curr_finger_status), dim=-1)
-        return curr_ee_pos_combined_b
-    
     def get_robot_state_b(self):
         """
         return: 
@@ -840,7 +799,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         curr_ee_pos_b, curr_ee_quat_b = subtract_frame_transforms(
                 curr_root_w[:, 0:3], curr_root_w[:, 3:7], curr_ee_pos_w[:, 0:3], curr_ee_pos_w[:, 3:7]
             )
-        # import pdb; pdb.set_trace()
         curr_orient_6d = quat_to_6d(curr_ee_quat_b)
 
         curr_finger_status = torch.mean(self._robot.data.joint_pos[:,7:], dim=1).unsqueeze(1)
@@ -849,49 +807,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         curr_robot_state_b = torch.cat((curr_ee_pos_b, curr_orient_6d, curr_finger_status), dim=-1)
 
         return curr_robot_state_b
-
-    def get_joint_pos_from_ee_pos(self, controller: DifferentialIKController, ee_goal):
-        ee_abs_b = self.get_curr_waypoint_b() # (num_envs, 8)
-
-        ik_commands = ee_goal[:, :-1] #(num_envs, 8)
-        controller.set_command(ik_commands)
-        
-        ee_jacobi_idx = self._robot.find_bodies("link_eef")[0][0]-1
-        jacobian = self._robot.root_physx_view.get_jacobians()[:,ee_jacobi_idx,:, self.joint_ids[:7]] #(num_envs, 6, 7)
-        joint_pos = self._robot.data.joint_pos[:,self.joint_ids[:7]] # (num_envs, 7)
-
-        joint_pos_des_arm = controller.compute(ee_abs_b[:,:3], ee_abs_b[:,3:7], jacobian, joint_pos)
-
-        finger_joint_pos_des = ee_goal[:, -1].unsqueeze(1).clone()
-        
-        joint_pos_des = torch.cat((joint_pos_des_arm, finger_joint_pos_des), dim=-1)
-
-        return joint_pos_des
-    
-
-    def get_joint_pos_from_ee_pos_binary(self, controller: DifferentialIKController, ee_goal):
-        ee_abs_b = self.get_curr_waypoint_b() # (num_envs, 8)
-
-        ik_commands = ee_goal[:, :-1] #(num_envs, 8)
-        controller.set_command(ik_commands)
-        
-        ee_jacobi_idx = self._robot.find_bodies("link_eef")[0][0]-1
-        jacobian = self._robot.root_physx_view.get_jacobians()[:,ee_jacobi_idx,:, self.joint_ids[:7]] #(num_envs, 6, 7)
-        joint_pos = self._robot.data.joint_pos[:,self.joint_ids[:7]] # (num_envs, 7)
-
-        joint_pos_des_arm = controller.compute(ee_abs_b[:,:3], ee_abs_b[:,3:7], jacobian, joint_pos)
-
-        finger_joint_pos_des = ee_goal[:, -1].unsqueeze(1).clone()
-        
-        finger_joint_pos_des[finger_joint_pos_des > 0.42] = 0.5          # NOTE: close gripper
-        finger_joint_pos_des[finger_joint_pos_des < 0.42] = 0.0          # NOTE: open gripper
-
-        joint_pos_des = torch.cat((joint_pos_des_arm, finger_joint_pos_des), dim=-1)
-
-        return joint_pos_des
     
     def get_joint_pos_from_ee_pos_10d(self, controller: DifferentialIKController, ee_goal):
-        curr_ee_b = self.get_curr_waypoint_b() # (num_envs, 10)
+        curr_ee_b = self.get_robot_state_b() # (num_envs, 10)
         curr_ee_quat_b = quat_from_6d(curr_ee_b[:,3:9])
 
         ee_goal_quat = quat_from_6d(ee_goal[:,3:9])
