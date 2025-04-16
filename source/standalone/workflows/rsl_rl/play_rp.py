@@ -160,11 +160,13 @@ def main():
             print("teleop obs: ", obs[:,10:20])
             print("cube obs: ", obs[:,20:])
             actions = policy(obs) # output residual
-            # print("output: ", actions)
+            print("residual : ", actions)
             # print("output norm: ", torch.norm(actions))
 
+            # import pdb; pdb.set_trace()
             # env stepping
             obs, rew, dones, extras = env.step(actions)
+            import pdb; pdb.set_trace()
             if getattr(env.cfg, "show_camera", False): 
                 raw_depth = obs[0,20:].reshape(120,120).detach().cpu().numpy()              # convert to np array
                 # rotated_depth = cv2.rotate(raw_depth, cv2.ROTATE_90_COUNTERCLOCKWISE)

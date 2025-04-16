@@ -193,7 +193,7 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     use_privilege_obs = True
     apply_dmr = False
     num_demos = 2 # TODO change to 3
-    state_history_length = 10 # 1.5s ago # TODO change to 10
+    state_history_length = 50 # 0.3s ago
 
     # parameters
     pos_std = 5e-3 # dmr scales
@@ -329,10 +329,14 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self.diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=self.num_envs, device=self.device)
 
         self.collected = []
+        self.collect_min_max_obs_values = False
         
         self.teleop_comm_in_ee_fr = torch.from_numpy(np.loadtxt("RRL/sim2real/input_output/traj2/teleop_base_ee_list.txt")).float() # without gripper pose
         self.teleop_comm_in_ee_fr = self.teleop_comm_in_ee_fr.to('cuda:0')[:, :]
         self.teleop_comm_in_ee_fr[:,-1] = (self.teleop_comm_in_ee_fr[:,-1] > 0.2).float()
+
+        self.sim_teleop_ee_fr = []
+        self.sim_teleop_base_fr = []
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -381,9 +385,11 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
         else: 
             goal_in_ee_fr = self.curr_comm_in_curr_ee_fr + self.cfg.alpha * self.ee_residual
+            print("base action: ", self.curr_comm_in_curr_ee_fr)
             # goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env] + self.cfg.alpha * self.ee_residual
             ee_10D_b = self.curr_robot_ee_b.clone()
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
+            print("ee goal clean b: ", self.ee_goal_b)
 
         ee_goal_filtered = self.cfg.tilde * self.ee_goal_b.clone() + (1-self.cfg.tilde) * self.last_ee.clone()
 
@@ -395,10 +401,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         ee_goal_filtered[:,:3] = torch.clamp(ee_goal_filtered[:,:3], self.robot_position_lower_limits, self.robot_position_upper_limits)
         ee_goal_filtered[:,-1] = (ee_goal_filtered[:,-1] > 0.5).float()
-
-        # print("ee goal height: ", ee_goal_filtered[:,2])
-
-        # print(ee_goal_filtered)
+        print("ee goal filtered: ", ee_goal_filtered)
 
         self.ee_hist.append(ee_goal_filtered.clone())
 
@@ -413,8 +416,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         self.joint_pos = self.get_joint_pos_from_ee_pos_10d(self.diff_ik_controller, ee_goal_filtered)                           # ee_goal always abs coordinates
         self.robot_dof_targets[:] = torch.clamp(self.joint_pos, self.robot_dof_lower_limits[:8], self.robot_dof_upper_limits[:8])   # (num_envs, 8)
-        # print("robot joint targets")
-        # format_tensor(self.robot_dof_targets)
+        print("qpos goal: ", self.robot_dof_targets)
         self.time_step_per_env += 1
 
         self.action_list.append(ee_goal_filtered.clone())
@@ -498,15 +500,15 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         super()._reset_idx(env_ids)
 
         # DEBUG: collect obs data and compute min/max            
-        # if len(self.collected) > 0:
-        #     data = torch.cat(self.collected, dim=0)  # shape: (N,26)
+        if self.collect_min_max_obs_values and len(self.collected) > 0:
+            data = torch.cat(self.collected, dim=0)  # shape: (N,26)
 
-        #     # Compute column-wise minimum and maximum.
-        #     min_vals = torch.min(data, dim=0).values  # shape: (26,)
-        #     max_vals = torch.max(data, dim=0).values  # shape: (26,)
+            # Compute column-wise minimum and maximum.
+            min_vals = torch.min(data, dim=0).values  # shape: (26,)
+            max_vals = torch.max(data, dim=0).values  # shape: (26,)
 
-        #     print("Minimum values for each dimension:", min_vals)
-        #     print("Maximum values for each dimension:", max_vals)
+            print("Minimum values for each dimension:", min_vals)
+            print("Maximum values for each dimension:", max_vals)
 
         # Reset time step
         self.time_step_per_env[env_ids] = 0
@@ -596,6 +598,17 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         curr_teleop_comm_b = self.teleop_comm_obs.clone()
         self.curr_comm_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, curr_teleop_comm_b)
+        # self.sim_teleop_ee_fr.append(self.curr_comm_in_curr_ee_fr.clone())
+        # if len(self.sim_teleop_ee_fr) > 400:
+        #     save_to_txt(self.sim_teleop_ee_fr, "RRL/sim2real/sim_traj1/teleop_comm_ee_fr.txt")
+        #     print("teleop comm ee fr saved")
+        #     exit()
+        # self.sim_teleop_base_fr.append(curr_teleop_comm_b.clone())
+        # if len(self.sim_teleop_base_fr) == 400:
+        #     save_to_txt(self.sim_teleop_base_fr, "RRL/sim2real/sim_traj1/teleop_comm_base_fr.txt")
+        #     print("teleop comm base fr saved")
+        #     exit()
+
         # print("curr comm in curr ee fr: ", self.curr_comm_in_curr_ee_fr)
 
         cube_8D_w = self._robot.data.root_state_w[:]
@@ -606,12 +619,11 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         cube_10D_b = ee_7D_to_10D(cube_7D_b)
         cube_pose_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, cube_10D_b)[:,:9]
         
-        # print("curr robot ee b")
-        # format_tensor(self.curr_robot_ee_b)
-        # print("curr teleop comm b")
-        # format_tensor(curr_teleop_comm_b)
-        # print("cube pose b")
-        # format_tensor(cube_10D_b)
+        # print obs in base fr
+        print("curr robot ee b: ", self.curr_robot_ee_b)
+        print("curr teleop comm b: ", curr_teleop_comm_b)
+        print("cube pose b: ", cube_10D_b)
+
         # import pdb; pdb.set_trace()
 
         # visualize obs in base fr
@@ -620,49 +632,50 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             self.marker2.visualize(self.ee_goal_b[:,:3], ee_10D_to_8D(self.ee_goal_b)[:,3:7])
             self.marker3.visualize(cube_7D_b[:,:3], cube_7D_b[:,3:7])
 
-        # robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
-        #                                 -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
-        #                                 0.0, # gripper
-        #                                 ], device=self.device).repeat(self.num_envs, 1) 
+        robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
+                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
+                                        0.0, # gripper
+                                        ], device=self.device).repeat(self.num_envs, 1) 
         
 
-        # robot_state_max = torch.tensor([0.1, 0.1, 0.1,  # position
-        #                                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
-        #                                 1.0, # gripper
-        #                                 ], device=self.device).repeat(self.num_envs, 1) 
+        robot_state_max = torch.tensor([0.1, 0.1, 0.1,  # position
+                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
+                                        1.0, # gripper
+                                        ], device=self.device).repeat(self.num_envs, 1) 
         
-        # teleop_comm_min = torch.tensor([-0.1, -0.1, -0.1,  # position
-        #                                 -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
-        #                                 0.0, # gripper
-        #                                 ], device=self.device).repeat(self.num_envs, 1) 
+        teleop_comm_min = torch.tensor([-0.05, -0.05, -0.05,  # position
+                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
+                                        0.0, # gripper
+                                        ], device=self.device).repeat(self.num_envs, 1) 
         
 
-        # teleop_comm_max = torch.tensor([0.1, 0.1, 0.1,  # position
-        #                                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
-        #                                 1.0, # gripper
-        #                                 ], device=self.device).repeat(self.num_envs, 1) 
+        teleop_comm_max = torch.tensor([0.05, 0.05, 0.05,  # position
+                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
+                                        1.0, # gripper
+                                        ], device=self.device).repeat(self.num_envs, 1) 
 
-        # cube_state_min = torch.tensor([-0.1, -0.1, -0.0,  # position
-        #                                 -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation
-        #                                 ], device=self.device).repeat(self.num_envs, 1)
+        cube_state_min = torch.tensor([-0.1, -0.1, -0.0,  # position
+                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation
+                                        ], device=self.device).repeat(self.num_envs, 1)
         
-        # cube_state_max = torch.tensor([0.2, 0.1, 0.5,  # position
-        #                                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation
-        #                                 ], device=self.device).repeat(self.num_envs, 1)
+        cube_state_max = torch.tensor([0.2, 0.1, 0.5,  # position
+                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation
+                                        ], device=self.device).repeat(self.num_envs, 1)
                                         
-        # normalized_robot_state_obs = (prev_ee_in_curr_ee_fr - robot_state_min) / (robot_state_max - robot_state_min)
-        # normalized_teleop_comm_obs = (self.curr_comm_in_curr_ee_fr - teleop_comm_min) / (teleop_comm_max - teleop_comm_min)
-        # normalized_cube_pose_obs = (cube_pose_in_curr_ee_fr - cube_state_min) / (cube_state_max - cube_state_min)
+        normalized_robot_state_obs = (prev_ee_in_curr_ee_fr - robot_state_min) / (robot_state_max - robot_state_min)
+        normalized_teleop_comm_obs = (self.curr_comm_in_curr_ee_fr - teleop_comm_min) / (teleop_comm_max - teleop_comm_min)
+        normalized_cube_pose_obs = (cube_pose_in_curr_ee_fr - cube_state_min) / (cube_state_max - cube_state_min)
 
         actor_obs = torch.cat(
             (
-                prev_ee_in_curr_ee_fr,
-                self.curr_comm_in_curr_ee_fr.clone(),
-                cube_pose_in_curr_ee_fr,
+                normalized_robot_state_obs,
+                normalized_teleop_comm_obs,
+                normalized_cube_pose_obs,
             ),
             dim=-1,
         )
-        # self.collected.append(actor_obs.clone())
+        if self.collect_min_max_obs_values:
+            self.collected.append(actor_obs.clone())
 
         # print normalized obs
         # print("normalized robot state obs")
