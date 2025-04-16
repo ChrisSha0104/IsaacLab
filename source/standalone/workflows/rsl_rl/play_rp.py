@@ -136,7 +136,7 @@ def main():
     slowly = False
     
     # turn off dmr during play?
-    apply_dmr = True
+    apply_dmr = False
     setattr(env.cfg, "apply_dmr", apply_dmr) # NOTE: only applies after initial reset!!!
 
     mark_demo = True
@@ -156,8 +156,12 @@ def main():
             if slowly:
                 time.sleep(0.2)
             # agent stepping
+            print("robot obs: ", obs[:,:10])
+            print("teleop obs: ", obs[:,10:20])
+            print("cube obs: ", obs[:,20:])
             actions = policy(obs) # output residual
-            # print("residual: ", actions)
+            # print("output: ", actions)
+            # print("output norm: ", torch.norm(actions))
 
             # env stepping
             obs, rew, dones, extras = env.step(actions)
@@ -168,6 +172,8 @@ def main():
                 depth_vis = cv2.resize(depth_vis,(480,480))
                 cv2.imshow("depth_image",depth_vis)
                 cv2.waitKey(1)
+            
+            # import pdb; pdb.set_trace()
             
         if args_cli.video:
             timestep += 1

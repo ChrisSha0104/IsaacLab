@@ -174,12 +174,13 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     )
 
     # visualization options: (All turned to false during training)
-    show_demo = False
-    clean_demo = False
+    play_training_demo = False
+    play_real_demo = False
+    add_noise_to_demo = True
     mark_ee_abs = False
     mark_demo_abs = False
     show_camera = False                  # option only used for play
-    mark_obs = False
+    mark_obs = True
 
     # debug options
     debug_ee = False
@@ -190,9 +191,9 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     use_visual_encoder = False
     learn_std = True
     use_privilege_obs = True
-    apply_dmr = True
-    num_demos = 2
-    state_history_length = 50 # 1.5s ago
+    apply_dmr = False
+    num_demos = 2 # TODO change to 3
+    state_history_length = 50 # 1.5s ago # TODO change to 10
 
     # parameters
     pos_std = 5e-3 # dmr scales
@@ -204,15 +205,15 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
 
     # reward scale RESIDUAL
     # --- task-completion ---
-    completion_scale = 30.0
+    completion_scale = 1.0
     ee_dist_reward_scale = 0.3 
     height_reward_scale = 0.1
 
     # --- auxiliary ---
-    residual_penalty_scale = -0.05
+    residual_penalty_scale = -0.1
     # ee_rate_scale = 0.0 #-0.2
     residual_rate_scale = -0.1
-    # velocity_penalty_scale = 0.0 #-0.05
+    velocity_penalty_scale = -0.05
     # jerk_penalty_scale = 0.0 # -0.5
     gripper_height_scale = -10.0
 
@@ -231,13 +232,13 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
     def __init__(self, cfg: XArmCubeResidualStateLocalBinaryV3EnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         
-        if self.cfg.debug_ee or self.cfg.debug_joint_pos or self.cfg.mark_demo_abs or self.cfg.show_demo:
+        if self.cfg.debug_ee or self.cfg.debug_joint_pos or self.cfg.mark_demo_abs or self.cfg.play_training_demo:
             print("--------DEBUG MODE--------")
-            if self.cfg.show_demo:
-                if self.cfg.clean_demo:
-                    print("SHOWING CLEAN DEMO TRAJECTORY")
+            if self.cfg.play_training_demo:
+                if self.cfg.add_noise_to_demo:
+                    print("SHOWING NOISED DEMO TRAJECTORY")
                 else:
-                    print("SHOWING NOISY DEMO TRAJECTORY")
+                    print("SHOWING CLEAN DEMO TRAJECTORY")
         else:
             print("--------TRAINING MODE--------")
         
@@ -328,6 +329,10 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self.diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=self.num_envs, device=self.device)
 
         self.collected = []
+        
+        self.teleop_comm_in_ee_fr = torch.from_numpy(np.loadtxt("RRL/sim2real/input_output/traj2/teleop_base_ee_list.txt")).float() # without gripper pose
+        self.teleop_comm_in_ee_fr = self.teleop_comm_in_ee_fr.to('cuda:0')[:, :]
+        self.teleop_comm_in_ee_fr[:,-1] = (self.teleop_comm_in_ee_fr[:,-1] > 0.2).float()
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -366,13 +371,17 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         
         self.last_ee = self.ee_goal_b.clone()
 
-        if self.cfg.show_demo:
-            # import pdb; pdb.set_trace()
+        if self.cfg.play_training_demo:
             goal_in_ee_fr = self.curr_comm_in_curr_ee_fr
             ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
+        elif self.cfg.play_real_demo:
+            goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env[0]].unsqueeze(0)
+            ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
+            self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
         else: 
-            goal_in_ee_fr = self.curr_comm_in_curr_ee_fr + self.cfg.alpha * self.ee_residual
+            # goal_in_ee_fr = self.curr_comm_in_curr_ee_fr + self.cfg.alpha * self.ee_residual
+            goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env] + self.cfg.alpha * self.ee_residual
             ee_10D_b = self.curr_robot_ee_b.clone()
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
 
@@ -407,6 +416,8 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         # import pdb; pdb.set_trace()
         self.joint_pos = self.get_joint_pos_from_ee_pos_10d(self.diff_ik_controller, ee_goal_filtered)                           # ee_goal always abs coordinates
         self.robot_dof_targets[:] = torch.clamp(self.joint_pos, self.robot_dof_lower_limits[:8], self.robot_dof_upper_limits[:8])   # (num_envs, 8)
+        print("robot joint targets")
+        format_tensor(self.robot_dof_targets)
         self.time_step_per_env += 1
 
         self.action_list.append(ee_goal_filtered.clone())
@@ -555,7 +566,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         #     self.demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
         
         # add noise to demo traj
-        if self.cfg.clean_demo:
+        if not self.cfg.add_noise_to_demo:
             self.training_demo_traj = self.demo_traj
         else:
             step_interval = int(torch.randint(20, 41, (1,)).item())
@@ -592,6 +603,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         curr_teleop_comm_b = self.teleop_comm_obs.clone()
         self.curr_comm_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, curr_teleop_comm_b)
+        print("curr comm in curr ee fr: ", self.curr_comm_in_curr_ee_fr)
 
         cube_8D_w = self._robot.data.root_state_w[:]
         cube_pos_b, cube_quat_b = subtract_frame_transforms(
@@ -601,10 +613,18 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         cube_10D_b = ee_7D_to_10D(cube_7D_b)
         cube_pose_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, cube_10D_b)[:,:9]
         
+        # print("curr robot ee b")
+        # format_tensor(self.curr_robot_ee_b)
+        # print("curr teleop comm b")
+        # format_tensor(curr_teleop_comm_b)
+        # print("cube pose b")
+        # format_tensor(cube_10D_b)
+        # import pdb; pdb.set_trace()
+
         # visualize obs in base fr
         if self.cfg.mark_obs:
             self.marker1.visualize(prev_robot_ee_b[:,:3], ee_10D_to_8D(prev_robot_ee_b)[:,3:7])
-            self.marker2.visualize(curr_teleop_comm_b[:,:3], ee_10D_to_8D(curr_teleop_comm_b)[:,3:7])
+            self.marker2.visualize(self.ee_goal_b[:,:3], ee_10D_to_8D(self.ee_goal_b)[:,3:7])
             self.marker3.visualize(cube_7D_b[:,:3], cube_7D_b[:,3:7])
 
         robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
@@ -747,7 +767,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             # + self.cfg.ee_rate_scale * delta_ee
             + self.cfg.gripper_height_scale * gripper_height
             + self.cfg.completion_scale * completion
-            # + self.cfg.velocity_penalty_scale * velocity_penalty
+            + self.cfg.velocity_penalty_scale * velocity_penalty
             # + self.cfg.contact_force_scale * contact_force
             # + self.cfg.jerk_penalty_scale * jerk
             + self.cfg.residual_rate_scale * delta_residual
@@ -771,7 +791,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             # "ee_rate": (self.cfg.ee_rate_scale * delta_ee).mean(),
             "gripper_height": (self.cfg.gripper_height_scale * gripper_height).mean(),
             "completion": (self.cfg.completion_scale * completion).mean(),
-            # "velocity_penalty": (self.cfg.velocity_penalty_scale * velocity_penalty).mean(),
+            "velocity_penalty": (self.cfg.velocity_penalty_scale * velocity_penalty).mean(),
             # "jerk_penalty": (self.cfg.jerk_penalty_scale * jerk).mean(),
             "delta_residual": (self.cfg.residual_rate_scale * delta_residual).mean(),
             # "contact_force": (self.cfg.contact_force_scale * contact_force).mean(),

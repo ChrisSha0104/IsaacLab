@@ -182,7 +182,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     decimation = 4
     sim_step_counter = 0
     count = 0
-    traj_length = 50
+    traj_length = 10
 
     # reset robot
     init_qpos = torch.tensor([[-0.0537, -0.6888, -0.0261,  0.4878, -0.0491,  1.2839, -0.0107, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], device='cuda:0')

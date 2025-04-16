@@ -170,23 +170,17 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     robot_entity_cfg = SceneEntityCfg("robot", joint_names=["joint.*"], body_names=["xarm_gripper_base_link"]) # TODO: check
     robot_entity_cfg.resolve(scene)
 
-    diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
-    diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=scene.num_envs, device=sim.device)
-    
-    ik_commands = torch.zeros(scene.num_envs, diff_ik_controller.action_dim, device=robot.device)
-    ee_jacobi_idx = robot_entity_cfg.body_ids[0] - 1 # type: ignore
-
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
     decimation = 4
     sim_step_counter = 0
     count = 0
 
-    qpos_traj = torch.from_numpy(np.loadtxt("RRL/sim2real_data/qpos_goal.txt")).float() # without gripper pose
+    qpos_traj = torch.from_numpy(np.loadtxt("RRL/sim2real/obs_gap/traj2/qpos_goal.txt")).float() # without gripper pose
     qpos_traj = qpos_traj.to('cuda:0')[:, :7]
-    teleop_obs_traj_real = torch.from_numpy(np.loadtxt("RRL/sim2real_data/teleop_obs.txt")).float()  # load teleop observations
+    teleop_obs_traj_real = torch.from_numpy(np.loadtxt("RRL/sim2real/obs_gap/traj2/teleop_state_obs.txt")).float()  # load teleop observations
     teleop_obs_traj_real = teleop_obs_traj_real.to('cuda:0')  # ensure it's on the same device as qpos_traj
-    robot_obs_traj_real = torch.from_numpy(np.loadtxt("RRL/sim2real_data/robot_obs.txt")).float()  # load robot observations
+    robot_obs_traj_real = torch.from_numpy(np.loadtxt("RRL/sim2real/obs_gap/traj2/robot_state_obs.txt")).float()  # load robot observations
     robot_obs_traj_real = robot_obs_traj_real.to('cuda:0')  # ensure it's on the same device as qpos_traj
 
     # reset robot
@@ -198,14 +192,9 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     robot.reset()
     print("initial qpos goal: ", joint_pos[:, :7])
     print("robot qpos: ", robot.data.joint_pos[:, :7])  
-    
-    # reset controller
-    # ik_commands[:] = torch.from_numpy(ee_poses[0, :].reshape(1,-1)).to(device='cuda')
-    diff_ik_controller.reset()
-    # diff_ik_controller.set_command(ik_commands)
 
     robot_obs_traj_sim = []    
-    robot_obs_hist = HistoryBuffer(1, 50, 16, device='cuda:0') # type: ignore
+    robot_obs_hist = HistoryBuffer(1, 50, 10, device='cuda:0') # type: ignore
 
     # Simulation loop
     while simulation_app.is_running(): 
@@ -250,10 +239,10 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     time_steps = np.arange(len(robot_obs_traj_sim))
 
     # Create 7 subplots (one for each joint)
-    fig, axs = plt.subplots(16, 1, figsize=(10, 14), sharex=True)
+    fig, axs = plt.subplots(10, 1, figsize=(10, 14), sharex=True)
 
     # Loop through each joint index (0 to 6)
-    for dim in range(16):
+    for dim in range(10):
         axs[dim].plot(time_steps, robot_obs_sim[:, dim], label='robot_obs_sim')
         axs[dim].plot(time_steps, robot_obs_real[:, dim], label='robot_obs_real')
         axs[dim].set_ylabel(f'Dim {dim+1}')
@@ -273,54 +262,48 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 def get_robot_state_obs(robot: Articulation, robot_state_hist: HistoryBuffer) -> torch.Tensor:
     """Get the teleop and robot observations from the robot."""
 
-    robot_state_obs = get_robot_state_b(robot) # reset issues
-    robot_state_hist.append(robot_state_obs)
-    prev_robot_state_obs = robot_state_hist.get_oldest_obs() 
-    relative_robot_state = compute_relative_state(prev_robot_state_obs, robot_state_obs)
+    curr_robot_ee_b = get_robot_state_b(robot) # reset issues
+    robot_state_hist.append(curr_robot_ee_b)
+    prev_robot_ee_b = robot_state_hist.get_oldest_obs() 
+    # import pdb; pdb.set_trace()
+    prev_ee_in_curr_ee_fr = subtract_frame_transforms_10D(curr_robot_ee_b, prev_robot_ee_b) 
 
     robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
                                         -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
-                                        -0.5, -0.5, -0.5, # lin vel
-                                        -1.0, -1.0, -1.0, # ang vel
                                         0.0, # gripper
-                                        ], device='cuda:0').repeat(1, 1) # TODO: check why x is so large
+                                        ], device='cuda').repeat(1, 1) 
         
 
     robot_state_max = torch.tensor([0.1, 0.1, 0.1,  # position
-                                    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
-                                    0.5, 0.5, 0.5, # lin vel
-                                    1.0, 1.0, 1.0, # ang vel
-                                    1.0, # gripper
-                                    ], device='cuda:0').repeat(1, 1) # TODO: check why x is so large
+                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
+                                        1.0, # gripper
+                                        ], device='cuda').repeat(1, 1) 
         
-    standardized_robot_state_obs = (relative_robot_state - robot_state_min) / (robot_state_max - robot_state_min)
+    normalized_robot_state_obs = (prev_ee_in_curr_ee_fr - robot_state_min) / (robot_state_max - robot_state_min)
 
-    return standardized_robot_state_obs
+    return normalized_robot_state_obs
 
 def get_robot_state_b(robot: Articulation) -> torch.Tensor:
-    curr_state_w = robot.data.body_com_state_w[:,9,:]
-    curr_root_state = robot.data.root_state_w[:]
+    """
+    return: 
+        get current robot state in the base frame, (num_envs, 10)
+    """
+
+    # ee and root pose in world frame
+    curr_ee_pos_w = robot.data.body_com_state_w[:,9,:]
+    curr_root_w = robot.data.root_state_w[:]
 
     # ee pose in base (local) frame
     curr_ee_pos_b, curr_ee_quat_b = subtract_frame_transforms(
-            curr_root_state[:, 0:3], curr_root_state[:, 3:7], curr_state_w[:, 0:3], curr_state_w[:, 3:7]
+            curr_root_w[:, 0:3], curr_root_w[:, 3:7], curr_ee_pos_w[:, 0:3], curr_ee_pos_w[:, 3:7]
         )
     # import pdb; pdb.set_trace()
     curr_orient_6d = quat_to_6d(curr_ee_quat_b)
-    
-    # ee pose in base (local) frame
-    curr_lin_vel_b, _ = subtract_frame_transforms(
-            curr_root_state[:, 7:10], curr_root_state[:, 3:7], curr_state_w[:, 7:10], curr_state_w[:, 3:7]
-        )
-    
-    curr_ang_vel_b, _ = subtract_frame_transforms(
-            curr_root_state[:, 10:13], curr_root_state[:, 3:7], curr_state_w[:, 10:13], curr_state_w[:, 3:7]
-        )
 
     curr_finger_status = torch.mean(robot.data.joint_pos[:,7:], dim=1).unsqueeze(1)
     curr_finger_status = (curr_finger_status > 0.2).float() # convert gripper qpos to binary
 
-    curr_robot_state_b = torch.cat((curr_ee_pos_b, curr_orient_6d, curr_lin_vel_b, curr_ang_vel_b, curr_finger_status), dim=-1)
+    curr_robot_state_b = torch.cat((curr_ee_pos_b, curr_orient_6d, curr_finger_status), dim=-1)
 
     return curr_robot_state_b
 
