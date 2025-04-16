@@ -380,8 +380,8 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
         else: 
-            # goal_in_ee_fr = self.curr_comm_in_curr_ee_fr + self.cfg.alpha * self.ee_residual
-            goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env] + self.cfg.alpha * self.ee_residual
+            goal_in_ee_fr = self.curr_comm_in_curr_ee_fr + self.cfg.alpha * self.ee_residual
+            # goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env] + self.cfg.alpha * self.ee_residual
             ee_10D_b = self.curr_robot_ee_b.clone()
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
 
@@ -416,8 +416,8 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         # import pdb; pdb.set_trace()
         self.joint_pos = self.get_joint_pos_from_ee_pos_10d(self.diff_ik_controller, ee_goal_filtered)                           # ee_goal always abs coordinates
         self.robot_dof_targets[:] = torch.clamp(self.joint_pos, self.robot_dof_lower_limits[:8], self.robot_dof_upper_limits[:8])   # (num_envs, 8)
-        print("robot joint targets")
-        format_tensor(self.robot_dof_targets)
+        # print("robot joint targets")
+        # format_tensor(self.robot_dof_targets)
         self.time_step_per_env += 1
 
         self.action_list.append(ee_goal_filtered.clone())
