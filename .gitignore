@@ -57,3 +57,6 @@ _build
 **/runs/*
 **/logs/*
 **/recordings/*
+
+*.txt
+*.pt
