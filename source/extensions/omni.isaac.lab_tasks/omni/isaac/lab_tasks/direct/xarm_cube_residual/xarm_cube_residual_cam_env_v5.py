@@ -44,18 +44,23 @@ from typing import Callable
 # import omni.replicator.core as rep
 import os
 
+'''
+real gripper close: < 640 
+real qpose gripper close: > 0.2
 
+sim binary EE gripper close: > 0.5
+sim qpos gripper close: = 0.5
+'''
 
 @configclass
-class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
+class XArmCubeResidualCamLocalBinaryV5EnvCfg(DirectRLEnvCfg):
     # env 
     episode_length_s = 13.33333 # eps_len_s = traj_len * (dt * decimation)
     decimation = 4
-    action_space: int = 10 
-    observation_space = 10 + 10 + 9
-    state_space = 10 + 10 + 9
+    action_space: int = 10                          # [position, 6D orientation, gripper qpos]
+    observation_space = 10 + 10 + 120*120           # [robot state, teleop action, depth image]
+    state_space = 10 + 10 + 9 + 120*120         # [robot state, teleop action, depth image, object state, demo idx]
     rerender_on_reset = False
-
     # simulation
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 120, # NOTE: 30 Hz
@@ -159,6 +164,47 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
             ),
         )
     
+    # cameras
+    camera = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Robot/link_eef/cam",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.12, 0.0, 0.02), rot=(0.96, 0.0000, -0.26, 0.0000), convention="ros"), # z-down; x-forward
+        height=120,
+        width=120,
+        data_types=[
+            # "rgb",
+            "distance_to_image_plane",
+            # "normals",
+            # "semantic_segmentation",
+            # "instance_segmentation_fast",
+            # "instance_id_segmentation_fast",
+            ],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=21.315, focus_distance=400.0, horizontal_aperture=24, clipping_range=(0.01, 20) # NOTE: unit in cm
+        ),
+    )
+
+    # camera_intrinsics_info = [
+    #     21.315/24*120,
+    #     21.315/24*120,
+    #     120/2,
+    #     120/2,
+    # ]
+    # cam_int = torch.zeros((3, 3), device="cuda")
+    # cam_int[0, 0] = camera_intrinsics_info[0]
+    # cam_int[1, 1] = camera_intrinsics_info[1]
+    # cam_int[0, 2] = camera_intrinsics_info[2]
+    # cam_int[1, 2] = camera_intrinsics_info[3]
+    # cam_int[2, 2] = 1.0
+
+    # cam2eef = torch.eye(4, device="cuda")
+    # R = matrix_from_quat(torch.tensor([0.866, 0.0, -0.3, 0.0], device="cuda"))
+    # pos = torch.tensor([0.09, 0.0, 0.05], device="cuda")
+    # cam2eef[:3, :3] = R
+    # cam2eef[:3, 3] = pos
+
+    # print("camera transform")
+    # print(eef2camera)
+
     # ground plane
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -178,17 +224,20 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     play_real_demo = False
     mark_ee_abs = False
     mark_demo_abs = False
-    show_camera = False                  # option only used for play
     mark_obs = False
 
+    # play option:
+    show_camera = False                  # option only used for play
+
     # debug options
+    print_all_intermediate_value = False
     debug_ee = False
     debug_joint_pos = False
     store_obs = False
 
     # training options:
     add_noise_to_demo = True
-    use_visual_encoder = False
+    use_visual_encoder = True
     learn_std = True
     use_privilege_obs = True
     apply_dmr = True
@@ -206,7 +255,7 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     # reward scale RESIDUAL
     # --- task-completion ---
     completion_scale = 1.0
-    ee_dist_reward_scale = 0.3 
+    ee_dist_reward_scale = 0.1 
     height_reward_scale = 0.1
 
     # --- auxiliary ---
@@ -217,7 +266,7 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     # jerk_penalty_scale = 0.0 # -0.5
     gripper_height_scale = -10.0
 
-class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
+class XArmCubeResidualCamLocalBinaryV5Env(DirectRLEnv):
     # pre-physics step calls
     #   |-- _pre_physics_step(action)
     #   |-- _apply_action()
@@ -227,9 +276,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
     #   |-- _reset_idx(env_ids)
     #   |-- _get_observations()
 
-    cfg: XArmCubeResidualStateLocalBinaryV3EnvCfg
+    cfg: XArmCubeResidualCamLocalBinaryV5EnvCfg
 
-    def __init__(self, cfg: XArmCubeResidualStateLocalBinaryV3EnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: XArmCubeResidualCamLocalBinaryV5EnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         
         if self.cfg.debug_ee or self.cfg.debug_joint_pos or self.cfg.mark_demo_abs or self.cfg.play_training_demo:
@@ -330,20 +379,16 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         self.collected = []
         self.collect_min_max_obs_values = False
-        
-        self.teleop_comm_in_ee_fr = torch.from_numpy(np.loadtxt("RRL/sim2real/input_output/traj2/teleop_base_ee_list.txt")).float() # without gripper pose
-        self.teleop_comm_in_ee_fr = self.teleop_comm_in_ee_fr.to('cuda:0')[:, :]
-        self.teleop_comm_in_ee_fr[:,-1] = (self.teleop_comm_in_ee_fr[:,-1] > 0.2).float()
-
-        self.sim_teleop_ee_fr = []
         self.sim_teleop_base_fr = []
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self._cube = RigidObject(self.cfg.cube)
+        self._camera = TiledCamera(self.cfg.camera)
 
         self.scene.articulations["robot"] = self._robot
         self.scene.rigid_objects["cube"] = self._cube
+        self.scene.sensors["camera"] = self._camera
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -368,10 +413,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         # for RP, the arg actions is the residual!
         self.last_ee_residual = self.ee_residual.clone()
         self.ee_residual = ee_residual.clone()
-        # print("ee residual")
-        # format_tensor(self.ee_residual)
-        # print("demo ee")
-        # format_tensor(self.training_demo_traj[self.env_idx, self.action_idx, self.demo_idx] + self.init_ee)
         
         self.last_ee = self.ee_goal_b.clone()
 
@@ -379,17 +420,23 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             goal_in_ee_fr = self.curr_comm_in_curr_ee_fr
             ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
-        elif self.cfg.play_real_demo:
-            goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env[0]].unsqueeze(0)
-            ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
-            self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
+        # elif self.cfg.play_real_demo:
+        #     goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env[0]].unsqueeze(0)
+        #     ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
+        #     self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
         else: 
             goal_in_ee_fr = self.curr_comm_in_curr_ee_fr + self.cfg.alpha * self.ee_residual
-            print("base action: ", self.curr_comm_in_curr_ee_fr)
-            # goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env] + self.cfg.alpha * self.ee_residual
             ee_10D_b = self.curr_robot_ee_b.clone()
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
-            print("ee goal clean b: ", self.ee_goal_b)
+
+            if self.cfg.print_all_intermediate_value:
+                print(">>>>>>>>>>>>>>> POLICY OUTPUT <<<<<<<<<<<<<<<<")
+                print("base action (comm in ee fr): ")
+                format_tensor(self.curr_comm_in_curr_ee_fr)
+                print("residual: ")
+                format_tensor(self.ee_residual)
+                print("ee goal clean b: ")
+                format_tensor(self.ee_goal_b)
 
         ee_goal_filtered = self.cfg.tilde * self.ee_goal_b.clone() + (1-self.cfg.tilde) * self.last_ee.clone()
 
@@ -401,7 +448,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         ee_goal_filtered[:,:3] = torch.clamp(ee_goal_filtered[:,:3], self.robot_position_lower_limits, self.robot_position_upper_limits)
         ee_goal_filtered[:,-1] = (ee_goal_filtered[:,-1] > 0.5).float()
-        print("ee goal filtered: ", ee_goal_filtered)
+
+        if self.cfg.print_all_intermediate_value:
+            print("ee goal filtered: ", ee_goal_filtered)
 
         self.ee_hist.append(ee_goal_filtered.clone())
 
@@ -416,10 +465,12 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         self.joint_pos = self.get_joint_pos_from_ee_pos_10d(self.diff_ik_controller, ee_goal_filtered)                           # ee_goal always abs coordinates
         self.robot_dof_targets[:] = torch.clamp(self.joint_pos, self.robot_dof_lower_limits[:8], self.robot_dof_upper_limits[:8])   # (num_envs, 8)
-        print("qpos goal: ", self.robot_dof_targets)
         self.time_step_per_env += 1
+        if self.cfg.print_all_intermediate_value:
+            print("robot joint pose target")
+            format_tensor(self.robot_dof_targets)
 
-        self.action_list.append(ee_goal_filtered.clone())
+        # self.action_list.append(ee_goal_filtered.clone())
         # if self.time_step_per_env == 399:
         #     actions = np.concatenate([t.detach().cpu().numpy() for t in self.action_list], axis=0)  # shape: (100, 7)
 
@@ -471,6 +522,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             quat = quat_from_6d(self.teleop_comm_obs[:,3:9])
             self.demo_ee_marker.visualize(self.teleop_comm_obs[:, :3] - self.scene.env_origins[:,:3], quat)
 
+        self._camera.update(dt=self.dt)
         return _return
 
     # post-physics step calls 
@@ -485,11 +537,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         terminated = self._robot.data.body_com_state_w[:, 9, 2] < 0.165 #NOTE: 9th body is link_eef
         # print("actual ee height: ", self._robot.data.body_com_state_w[:, 9, 2])
 
-        # terminated |= self.finger_joint_dif > 0.5 #TODO: can't be a termination condition 
-
         truncated = self.episode_length_buf >= self.max_episode_length - 1
-
-        # truncated = self.time_step_per_env >= self.traj_length - 1
 
         return terminated, truncated
 
@@ -551,11 +599,11 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
         self._robot.reset(env_ids=env_ids)
 
-        # update initial pose of demo trajs
-        if self.cfg.apply_dmr:
+        # # update initial pose of demo trajs
+        if self.cfg.apply_dmr: # TODO: check this!!!! Learn indexing
             # ee after dmr
             initial_ee = self.get_robot_state_b().clone()
-            # interpolated from randomized ee to demo traj
+            # interpolated from randomized ee to demo traj            
             initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.demo_traj[env_ids, self.demo_idx[env_ids], 20, :], 20) # (env_ids, 1, 50, 10)
             # fill in initial traj
             self.demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
@@ -578,6 +626,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         reseted_root_states[env_ids,:3] += self.scene.env_origins[env_ids,:3]
         self._cube.write_root_state_to_sim(root_state=reseted_root_states, env_ids=env_ids) #NOTE: no render on reset
         self._cube.reset(env_ids)
+
+        # camera
+        self._camera.reset(env_ids)
 
         # controller
         self.diff_ik_controller.reset(env_ids) # type: ignore
@@ -619,12 +670,15 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         cube_10D_b = ee_7D_to_10D(cube_7D_b)
         cube_pose_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, cube_10D_b)[:,:9]
         
-        # print obs in base fr
-        print("curr robot ee b: ", self.curr_robot_ee_b)
-        print("curr teleop comm b: ", curr_teleop_comm_b)
-        print("cube pose b: ", cube_10D_b)
-
-        # import pdb; pdb.set_trace()
+        if self.cfg.print_all_intermediate_value:
+            print(">>>>>>>>>>>>>>> POLICY INPUTS <<<<<<<<<<<<<<<<")
+            print("-------------- 1. 10D observations in base frame --------------")
+            print("curr robot ee b: ")
+            format_tensor(self.curr_robot_ee_b)
+            print("curr teleop comm b: ")
+            format_tensor(curr_teleop_comm_b)
+            print("cube pose b: ")
+            format_tensor(cube_10D_b)
 
         # visualize obs in base fr
         if self.cfg.mark_obs:
@@ -666,32 +720,60 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         normalized_teleop_comm_obs = (self.curr_comm_in_curr_ee_fr - teleop_comm_min) / (teleop_comm_max - teleop_comm_min)
         normalized_cube_pose_obs = (cube_pose_in_curr_ee_fr - cube_state_min) / (cube_state_max - cube_state_min)
 
+        depth_clean = self._camera.data.output["distance_to_image_plane"].permute(0,3,1,2)
+        depth_filtered = filter_sim_depth(depth_clean) # (num_envs, 120*120) which should give same reading as real
+        normalized_depth = normalize_depth_01(depth_filtered)
+
+        # if True: 
+        #     depth_vis = filter_depth_for_visualization(depth_filtered.reshape(120,120).detach().cpu().numpy(), unit='m') # only works for 1 env
+        #     cv2.imshow("depth_image", depth_vis)
+        #     cv2.waitKey(1)
+        #     save_tensor_as_txt(depth_filtered, "RRL/sim2real/vision_gap/raw/visual_raw_obs_sim")
+        #     import pdb; pdb.set_trace()
+
+        # save_tensor_as_txt(normalized_depth, "RRL/sim2real/vision_gap/input/visual_input_obs_sim")
+        # import pdb; pdb.set_trace()
+    
         actor_obs = torch.cat(
             (
                 normalized_robot_state_obs,
                 normalized_teleop_comm_obs,
-                normalized_cube_pose_obs,
+                normalized_depth,
             ),
             dim=-1,
         )
         if self.collect_min_max_obs_values:
             self.collected.append(actor_obs.clone())
 
-        # print normalized obs
-        # print("normalized robot state obs")
-        # format_tensor(normalized_robot_state_obs)
-        # print("normalized teleop comm obs")
-        # format_tensor(normalized_teleop_comm_obs)
-        # print("normalized cube pose obs")
-        # format_tensor(normalized_cube_pose_obs)
+        if self.cfg.print_all_intermediate_value:
+            print("------------ 2. 10D normalized rel obs (actual input) ------------")
+            print("normalized robot state obs")
+            format_tensor(normalized_robot_state_obs)
+            print("normalized teleop comm obs")
+            format_tensor(normalized_teleop_comm_obs)
+            print("normalized cube pose obs")
+            format_tensor(normalized_cube_pose_obs)
 
-        return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
+        if self.cfg.use_privilege_obs:
+            critic_obs = torch.cat(
+                (
+                    normalized_robot_state_obs,
+                    normalized_teleop_comm_obs,
+                    normalized_cube_pose_obs,
+                    # self.demo_idx.unsqueeze(1),
+                    normalized_depth,
+                ),
+                dim=-1,
+            )
+
+            return {"policy": torch.clamp(actor_obs, -5.0, 5.0),
+                    "critic": torch.clamp(critic_obs, -5.0, 5.0)}
+        else: 
+            return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
 
     def _compute_rewards(self):
         # height of the cube
-        height_reward = torch.where(self._cube.data.root_pos_w[:, 2] > self.cfg.minimal_height, 1.0, 0.0) #* (1+self._cube.data.root_pos_w[:, 2].clamp(0,0.3))
-        # print(self._cube.data.root_pos_w[:, 2])
-        # height_reward = self._cube.data.root_pos_w[:, 2].clamp(0.0,0.3) + (self._cube.data.root_pos_w[:, 2] > self.cfg.minimal_height)
+        height_reward = torch.where(self._cube.data.root_pos_w[:, 2] > self.cfg.minimal_height, 1.0, 0.0)
         cube_y = self._cube.data.root_pos_w[:, 1] - self.scene.env_origins[:, 1]
         cube_x = self._cube.data.root_pos_w[:, 0] - self.scene.env_origins[:, 0]
         height_reward *= (cube_y < 0.3) * (cube_y > -0.3) * (cube_x < 0.6) * (cube_x > 0.1)
@@ -716,9 +798,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             curr_root_pose_w[:, 0:3], curr_root_pose_w[:, 3:7], self._cube.data.body_com_state_w[:,0,:3], self._cube.data.body_com_state_w[:,0,3:7]
         )
         cube_pos_b = torch.cat([cube_position_b, cube_quaternion_b], dim=-1) # (num_envs, 7)
-
-        # self.demo_ee_marker.visualize(cube_pos_b[:,:3], cube_pos_b[:,3:7])
-        # self.ee_goal_marker.visualize(ee_gripper_b[:,:3], ee_gripper_b[:,3:7])
 
         # Distance of the end-effector to the object: (num_envs,)
         object_ee_distance = torch.norm(cube_pos_b - ee_gripper_b, dim=1)
@@ -836,9 +915,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         joint_pos_des_arm = controller.compute(curr_ee_b[:,:3], curr_ee_quat_b, jacobian, joint_pos)
 
-        gripper_status = ee_goal[:, -1].unsqueeze(1).clone()
-        gripper_status[gripper_status > 0.5] = 0.5          # NOTE: close gripper
-        gripper_status[gripper_status < 0.5] = 0.0          # NOTE: open gripper
+        gripper_status = ee_goal[:, -1].unsqueeze(1).clone() # binary gripper + residual output
+        gripper_status[gripper_status > 0.5] = 0.5          # NOTE: close gripper in qpos
+        gripper_status[gripper_status < 0.5] = 0.0          # NOTE: open gripper in qpos
 
         joint_pos_des = torch.cat((joint_pos_des_arm, gripper_status), dim=-1)
 

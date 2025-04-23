@@ -156,17 +156,20 @@ def main():
             if slowly:
                 time.sleep(0.2)
             # agent stepping
-            print("robot obs: ", obs[:,:10])
-            print("teleop obs: ", obs[:,10:20])
-            print("cube obs: ", obs[:,20:])
+            # print("robot obs: ", obs[:,:10])
+            # print("teleop obs: ", obs[:,10:20])
+            # print("cube obs: ", obs[:,20:])
             actions = policy(obs) # output residual
-            print("residual : ", actions)
+            # print("actions: ", actions)
+            # torch.save(obs, "obs_test_vis.pt")
+            # print("obs saved")
+            # import pdb; pdb.set_trace()
+            # print("residual : ", actions)
             # print("output norm: ", torch.norm(actions))
 
-            # import pdb; pdb.set_trace()
             # env stepping
             obs, rew, dones, extras = env.step(actions)
-            import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
             if getattr(env.cfg, "show_camera", False): 
                 raw_depth = obs[0,20:].reshape(120,120).detach().cpu().numpy()              # convert to np array
                 # rotated_depth = cv2.rotate(raw_depth, cv2.ROTATE_90_COUNTERCLOCKWISE)

@@ -113,7 +113,8 @@ def slerp_batch(q1: torch.Tensor, q2: torch.Tensor, ts: torch.Tensor) -> torch.T
         # Expand q1 and q2 for broadcasting: (B, 1, 4)
         q1_exp = q1.unsqueeze(1)
         q2_exp = q2.unsqueeze(1)
-        result = (1 - ts_exp) * q1_exp + ts_exp * q2_exp
+        ts_lin = ts_exp.unsqueeze(-1)
+        result = (1 - ts_lin) * q1_exp + ts_lin * q2_exp
         # Normalize result: here we can use a batched normalization.
         norm = torch.norm(result, dim=-1, keepdim=True)
         return result / norm

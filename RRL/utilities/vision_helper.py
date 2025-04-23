@@ -14,14 +14,20 @@ import cv2
 
 # import torch
 
-def normalize_depth_01(depth_input, min_depth=0.07, max_depth=0.5):
+def filter_sim_depth(sim_depth, min_depth=0.10, max_depth=0.5):
+    depth_rotated = torch.rot90(sim_depth, k=1, dims=(-2, -1))
+    filtered_depth = torch.nan_to_num(depth_rotated, 
+                                      nan=0.0,
+                                      posinf=max_depth,
+                                      neginf=min_depth,
+                                      )
+    filtered_depth = torch.clamp(filtered_depth, min=min_depth, max=max_depth)
+
+    return filtered_depth.reshape(-1, 120*120)
+
+
+def normalize_depth_01(depth_input, min_depth=0.10, max_depth=0.5):
     """Normalize depth to range [0, 1] while preserving spatial structure."""
-    depth_input = torch.nan_to_num(depth_input, nan=0.0)  # Replace NaNs with 0
-
-    # Ensure depth values are within the min-max range
-    depth_input = torch.clamp(depth_input, min=min_depth, max=max_depth)
-
-    # Normalize to range [0, 1]
     normalized_depth = (depth_input - min_depth) / (max_depth - min_depth)
 
     return normalized_depth.reshape(-1,120*120)
@@ -65,7 +71,7 @@ def add_perlin_noise(depth_images, scale=0.1, octaves=4, device="cuda"):
         torch.Tensor: Noisy depth images of shape (num_envs, H, W).
     """
     depth_images = depth_images.to(device)  # Move to GPU
-    perlin_map = generate_perlin_noise(depth_images.shape, scale, octaves, device=device)
+    perlin_map = generate_perlin_noise(depth_images.shape, scale, octaves, device=device) #type: ignore
     return depth_images + perlin_map
 
 def generate_perlin_noise(shape, scale=20, threshold=0.5):
@@ -119,18 +125,18 @@ def add_realistic_sim2real_noise(depth_map: torch.Tensor, zero_density=0.3):
 
 def save_tensor_as_txt(tensor, filename_prefix="depth_map"):
     """
-    Save a (num_envs, 1, 120, 120) PyTorch tensor as separate .txt files.
+    Save a (num_envs, 120*120) PyTorch tensor as separate .txt files.
 
     Args:
-        tensor (torch.Tensor): Tensor of shape (num_envs, 1, 120, 120).
+        tensor (torch.Tensor): Tensor of shape (num_envs, 120*120).
         filename_prefix (str): Prefix for the saved file names.
     """
-    assert tensor.ndim == 4 and tensor.shape[1] == 1, "Tensor must have shape (num_envs, 1, 120, 120)"
+    assert tensor.ndim == 2, "Tensor must have shape (num_envs, 120*120)"
     
     num_envs = tensor.shape[0]
     
     # Move tensor to CPU and convert to NumPy
-    tensor_np = tensor.squeeze(1).cpu().numpy()  # Shape (num_envs, 120, 120)
+    tensor_np = tensor.reshape(-1, 120, 120).cpu().numpy()  # Shape (num_envs, 120, 120)
 
     for i in range(num_envs):
         filename = f"{filename_prefix}_env{i}.txt"
@@ -216,5 +222,34 @@ def visualize_points_on_image(points_2d: torch.Tensor, image: np.ndarray, color=
     # Convert the points to CPU numpy int32 array.
     points_np = points_2d.cpu().numpy().astype(np.int32)
     for point in points_np:
-        cv2.circle(image, (point[0], point[1]), radius, color, -1)
+        cv2.circle(image, (point[0], point[1]), radius, color, -1) # type: ignore
     return image
+
+def filter_depth_for_visualization(depth: np.ndarray, max_depth: float = 1.0, min_depth: float = 0.1, unit: str = "mm") -> np.ndarray:
+    """
+    filter depth to be visualized using cv2.
+    """
+
+    if unit == "mm":
+        depth = depth / 1000.0
+    elif unit == "cm":
+        depth = depth / 100.0
+
+    # remove NaN and Inf values
+    depth_filtered = np.nan_to_num(
+        depth,
+        nan=0.0,
+        posinf=max_depth,
+        neginf=min_depth,
+    )
+    
+    # clip depth
+    depth = np.clip(depth_filtered, min_depth, max_depth)
+
+    # Normalize to [0, 255] and convert to uint8
+    depth_uint8 = (depth / max_depth * 255.0).astype(np.uint8)
+    
+    depth_vis = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_JET)
+    depth_vis = cv2.resize(depth_vis, (480, 480))
+    
+    return depth_vis

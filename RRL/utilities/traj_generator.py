@@ -304,7 +304,7 @@ def interpolate_10d_ee_trajectory(
     # Convert 6D representations to quaternions (assumed functions).
     q_init = quat_from_6d(orient6d_init)   # shape (num_envs, 4)
     q_final = quat_from_6d(orient6d_final)   # shape (num_envs, 4)
-    
+
     # Perform batched SLERP.
     q_traj = slerp_batch(q_init, q_final, ts)  # shape (num_envs, num_steps, 4)
     
