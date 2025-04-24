@@ -247,7 +247,7 @@ class XArmCubeResidualCamLocalBinaryV5EnvCfg(DirectRLEnvCfg):
     # parameters
     pos_std = 5e-3 # dmr scales
     rot_std = 1e-3
-    alpha = 0.2 # residual scale
+    alpha = 0.1 # residual scale
     tilde = 0.5 # low pass filter
     minimal_height = 0.05
     ee_dist_std = 0.1

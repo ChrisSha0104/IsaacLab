@@ -163,6 +163,11 @@ class XArmCubeScene(InteractiveSceneCfg):
         },
     )
 
+    fixed_asset = Articulation()
+    held_asset = Articulation(cfg_task.held_asset)
+    small_gear_asset = Articulation(cfg_task.small_gear_cfg)
+    large_gear_asset = Articulation(cfg_task.large_gear_cfg)
+
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     """Runs the simulation loop."""
     # Extract scene entities

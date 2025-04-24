@@ -9,15 +9,17 @@ Franka-Cabinet environment.
 import gymnasium as gym
 
 from . import agents
-from .xarm_cube_residual_cam_env_v0 import XArmCubeResidualCamLocalEnv, XArmCubeResidualCamLocalEnvCfg
-from .xarm_cube_residual_cam_env_v1 import XArmCubeResidualCamLocalBinaryEnv, XArmCubeResidualCamLocalBinaryEnvCfg
-from .xarm_cube_residual_cam_env_v2 import XArmCubeResidualCamLocalBinaryNewEnv, XArmCubeResidualCamLocalBinaryNewEnvCfg
-from .xarm_cube_residual_cam_env_v3 import XArmCubeResidualCamLocalBinaryV3Env, XArmCubeResidualCamLocalBinaryV3EnvCfg
-from .xarm_cube_residual_cam_env_v4 import XArmCubeResidualCamLocalBinaryV4Env, XArmCubeResidualCamLocalBinaryV4EnvCfg
+from .hist_versions.xarm_cube_residual_cam_env_v0 import XArmCubeResidualCamLocalEnv, XArmCubeResidualCamLocalEnvCfg
+from .hist_versions.xarm_cube_residual_cam_env_v1 import XArmCubeResidualCamLocalBinaryEnv, XArmCubeResidualCamLocalBinaryEnvCfg
+from .hist_versions.xarm_cube_residual_cam_env_v2 import XArmCubeResidualCamLocalBinaryNewEnv, XArmCubeResidualCamLocalBinaryNewEnvCfg
+from .hist_versions.xarm_cube_residual_cam_env_v3 import XArmCubeResidualCamLocalBinaryV3Env, XArmCubeResidualCamLocalBinaryV3EnvCfg
+from .hist_versions.xarm_cube_residual_cam_env_v4 import XArmCubeResidualCamLocalBinaryV4Env, XArmCubeResidualCamLocalBinaryV4EnvCfg
 from .xarm_cube_residual_cam_env_v5 import XArmCubeResidualCamLocalBinaryV5Env, XArmCubeResidualCamLocalBinaryV5EnvCfg
 
-from .xarm_cube_residual_state_env_v2 import XArmCubeResidualStateLocalBinaryNewEnv, XArmCubeResidualStateLocalBinaryNewEnvCfg
+from .hist_versions.xarm_cube_residual_state_env_v2 import XArmCubeResidualStateLocalBinaryNewEnv, XArmCubeResidualStateLocalBinaryNewEnvCfg
 from .xarm_cube_residual_state_env_v3 import XArmCubeResidualStateLocalBinaryV3Env, XArmCubeResidualStateLocalBinaryV3EnvCfg
+
+from .xarm_gear_residual_cam_env_v0 import XArmGearResidualCamLocalBinaryV0Env, XArmGearResidualCamLocalBinaryV0EnvCfg
 
 
 ##
@@ -114,6 +116,18 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": XArmCubeResidualStateLocalBinaryV3EnvCfg,
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCamV2Cfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="XArm-Residual-Gear-v0", #NOTE: previous pipeline with gear
+    entry_point="omni.isaac.lab_tasks.direct.xarm_cube_residual:XArmGearResidualCamLocalBinaryV0Env",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": XArmGearResidualCamLocalBinaryV0EnvCfg,
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCamV2Cfg",
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",

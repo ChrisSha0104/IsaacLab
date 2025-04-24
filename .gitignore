@@ -58,5 +58,7 @@ _build
 **/logs/*
 **/recordings/*
 
+# stored files
 *.txt
 *.pt
+*.sh
