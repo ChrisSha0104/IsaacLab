@@ -406,7 +406,7 @@ def combine_frame_transforms_10D(p10: torch.Tensor, p21: torch.Tensor) -> torch.
     return p20
 
 
-def ee_7D_to_10D(ee_7D: torch.Tensor) -> torch.Tensor:
+def ee_7D_to_9D(ee_7D: torch.Tensor) -> torch.Tensor:
     """
     args:
         ee 7D
@@ -421,6 +421,22 @@ def ee_7D_to_10D(ee_7D: torch.Tensor) -> torch.Tensor:
 
     orient_6D = quat_to_6d(quat)
     return torch.cat([position, orient_6D], dim=-1)
+
+def ee_9D_to_7D(ee_9D: torch.Tensor) -> torch.Tensor:
+    """
+    args:
+        ee 9D
+    return:
+        ee 7D
+    """
+    if ee_9D.shape[1] != 9:
+        raise ValueError("Input poses must be 9D.")
+
+    position = ee_9D[:, :3]
+    orient_6D = ee_9D[:, 3:9]
+
+    quat = quat_from_6d(orient_6D)
+    return torch.cat([position, quat], dim=-1)
 
 def ee_8D_to_10D(ee_8D: torch.Tensor) -> torch.Tensor:
     """

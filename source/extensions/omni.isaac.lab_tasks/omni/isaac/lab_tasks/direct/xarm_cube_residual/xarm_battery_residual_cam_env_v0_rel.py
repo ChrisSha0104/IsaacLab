@@ -68,8 +68,8 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
-            static_friction=1.5,
-            dynamic_friction=1.5,
+            static_friction=1.0,
+            dynamic_friction=1.0,
             restitution=0.0,
         ),
         # physx=PhysxCfg(
@@ -156,7 +156,7 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     battery_R = RigidObjectCfg(
             prim_path="/World/envs/env_.*/Battery_R",
             init_state=RigidObjectCfg.InitialStateCfg(
-                pos=(0.495, -0.0542, 0.0), # demo 1 (0.495, -0.0542, 0.0)
+                pos=(0.45, -0.08, 0.0), # demo 1 (0.495, -0.0542, 0.0)
                 rot=(0.707, 0.707, 0, 0),
             ),
             spawn=sim_utils.UsdFileCfg(
@@ -255,20 +255,23 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
 
     # training path
     training_data_path = "RRL/tasks/battery/training_set1"
-    enable_vision = False
 
     # visualization options: (All turned to false during training)
     play_training_demo = False
+    play_real_demo = False
+    mark_obs = False
 
     # play option:
     show_camera = False                  # option only used for play
 
     # debug options
-    debug_intermediate_values = False
+    print_all_intermediate_value = False #TODO: change this into a dict
+    debug_ee = False
+    debug_joint_pos = False
     store_obs = False
     
     # actor critic args
-    use_visual_encoder = False
+    use_visual_encoder = True
     visual_idx_actor = [20,20+120*120]
     visual_idx_critic = [20,20+120*120]
 
@@ -278,16 +281,19 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     use_privilege_obs = True
     apply_dmr = True
     num_demos = 10
+    state_history_length = 50 # 1.5s ago
 
     # parameters
+    pos_std = 5e-3 # dmr scales
+    rot_std = 1e-3
     alpha = 0.1 # residual scale
     tilde = 0.7 # low pass filter
     fingertip_dist_std = 0.1
 
     # reward scale RESIDUAL
     # --- task-completion ---
-    completion_reward_scale = 10.0
-    fingertip_dist_reward_scale = 0.3 # 0.5
+    completion_reward_scale = 1.0
+    fingertip_dist_reward_scale = 0.5 # 0.5
     battery_goal_dist_reward_scale = 0.5 # 0.5
 
     # --- auxiliary ---
@@ -314,21 +320,22 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
     def __init__(self, cfg: XArmBatteryResidualCamLocalBinaryV0EnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         
-        if self.cfg.debug_intermediate_values or self.cfg.play_training_demo or not self.cfg.add_noise_to_demo:
+        if self.cfg.debug_ee or self.cfg.debug_joint_pos or self.cfg.play_training_demo:
             print("--------DEBUG MODE--------")
+            if self.cfg.play_training_demo:
+                if self.cfg.add_noise_to_demo:
+                    print("SHOWING NOISED DEMO TRAJECTORY")
+                else:
+                    print("SHOWING CLEAN DEMO TRAJECTORY")
         else:
             print("--------TRAINING MODE--------")
 
-        if self.cfg.debug_intermediate_values:
+        if self.cfg.mark_obs:
             frame_marker_cfg = copy.deepcopy(FRAME_MARKER_CFG)
             frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1) # type: ignore
             self.marker1 = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/marker1")) # type: ignore
             self.marker2 = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/marker2")) # type: ignore
             self.marker3 = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/marker3")) # type: ignore
-            self.marker4 = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/marker4")) # type: ignore
-            self.marker5 = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/marker5")) # type: ignore
-            self.marker6 = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/marker6")) # type: ignore
-            self.marker7 = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/marker7")) # type: ignore
 
         self.dt = self.cfg.sim.dt * self.cfg.decimation
 
@@ -337,15 +344,23 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.robot_dof_upper_limits = self._robot.data.soft_joint_pos_limits[0, :, 1].to(device=self.device)
 
         self.robot_position_upper_limits = torch.tensor([[0.65, 0.5, 0.5]], device=self.device)
-        self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.2]], device=self.device)
+        self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.175]], device=self.device)
 
         self.num_eff_joints = self._robot.num_joints - 5
         self.robot_dof_targets = torch.zeros((self.num_envs, self.num_eff_joints), device=self.device)
 
         self.joint_ids = list(range(self._robot.num_joints))
         self.body_ids = list(range(self._robot.num_bodies))
+        self.last_action = self._robot.data.default_joint_pos[:, :8].clone()
+        self.last_dacc = torch.zeros((self.num_envs, 10), device=self.device)
         self.ee_residual = torch.zeros((self.num_envs, 10), device=self.device)
         self.last_ee_residual = self.ee_residual.clone()
+
+        self.action_list = []
+
+        self.teleop_comm_hist = HistoryBuffer(self.num_envs, self.cfg.state_history_length, self.cfg.action_space, device=self.device) # (num_envs, state_history_length, action_space) 
+        self.robot_state_hist = HistoryBuffer(self.num_envs, self.cfg.state_history_length, self.cfg.action_space, device=self.device) # (num_envs, state_history_length, action_space+6)
+        self.ee_hist = HistoryBuffer(self.num_envs, 3, self.cfg.action_space, device=self.device) # (num_envs, 3, action_space)
 
         # create time-based indexing for demo trajectories
         self.time_step_per_env = torch.zeros(self.num_envs, device=self.device, dtype=torch.long) # (num_envs, )
@@ -358,6 +373,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.training_demo_traj = self.demo_traj.clone()
         self.init_pos = torch.tensor([[0.256, 0.00,  0.399, 1.00, 0.00, 0.00, 0.00, -1.00, 0.00, 0.00]], device=self.device).repeat(self.num_envs, 1) # (num_envs, 10)
 
+        self.teleop_comm_obs = self.init_pos.clone() # most recent rel teleop ee command for each env (num_envs, 10)
         self.last_ee_goal = self.init_pos.clone()
         self.ee_goal_b = self.init_pos.clone()
 
@@ -381,10 +397,9 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
 
     def _set_goal_targets(self):
         """get hardcoded placing goals for battery L and R"""
-        self.target_pos_L = torch.tensor([[0.2429, 0.0678, 0.0056]], device=self.device).repeat(self.num_envs, 1) # target pos for battery L
-        self.target_pos_R = torch.tensor([[0.2430, -0.0679, 0.0057]], device=self.device).repeat(self.num_envs, 1) # target pos for battery R
-        self.target_quat_L = torch.tensor([[0.6939, 0.7198, 0.0031, -0.0193]], device=self.device).repeat(self.num_envs, 1) # target quat for battery L
-        self.target_quat_R = torch.tensor([[0.6940, 0.7198, 0.0113, -0.0112]], device=self.device).repeat(self.num_envs, 1) # target quat for battery R
+        left_placing_target_pose_7D = torch.tensor([[0.2429, 0.0678, 0.0056, 0.6939,  0.7198,  0.0031, -0.0193]], device=self.device).repeat(self.num_envs, 1) # target pose for battery L
+        right_placing_target_pose_7D = torch.tensor([[0.2430, -0.0679,  0.0057, 0.6940,  0.7198,  0.0113, -0.0112]], device=self.device).repeat(self.num_envs, 1) # target pose for battery R
+        self.placing_targets_7D_b = torch.stack((left_placing_target_pose_7D, right_placing_target_pose_7D), dim=1) # (num_envs, 2, 7)
 
     def _set_box_region(self):
         self.box_lower_limits = torch.tensor([[0.12, -0.1, 0.0]], device=self.device).repeat(self.num_envs, 1)
@@ -392,11 +407,11 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
 
     def _set_default_dynamics_parameters(self):
         """Set parameters defining dynamic interactions."""
-        pass 
-        # # Set masses and frictions.
-        # self._set_friction(self._battery_L, 0.75)
-        # self._set_friction(self._battery_R, 0.75)
-        # self._set_friction(self._robot, 0.75)
+        pass
+        # Set masses and frictions.
+        # self._set_friction(self._held_asset, self.cfg.held_asset_cfg.friction)
+        # self._set_friction(self._fixed_asset, self.cfg.fixed_asset_cfg.friction)
+        # self._set_friction(self._robot, self.cfg.robot_friction)
 
     def _set_friction(self, asset, value):
         """Update material properties for a given asset."""
@@ -424,74 +439,58 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         """
         get intermediate values computed from raw tensors
         """
-
-        # compute robot state info in base frame
-        self.ee_pos, self.ee_quat, self.ee_orn_6D, self.gripper_binary = self.get_robot_state_info_b()
-        self.ee_10D = self.get_robot_ee_10D_b()
-        self.ee_7D  = self.get_robot_ee_7D_b()
-        self.fingertip_pos = offset_b_in_target_fr(self.ee_pos, self.ee_quat, [0.0, 0.0, 0.14])
-
-        # get curr teleop command info in base frame
-        self.teleop_pos, self.teleop_quat, self.teleop_orn_6D, self.teleop_gripper_binary = self.get_teleop_state_info_b()
-        self.teleop_10D = self.get_teleop_ee_10D_b()
-        self.teleop_7D  = self.get_teleop_ee_7D_b()
-        self.teleop_fingertip_pos  = offset_b_in_target_fr(self.teleop_pos, self.teleop_quat, [0.0, 0.0, 0.14])
-
         # compute battery poses in base frame
         robot_root_w = self._robot.data.root_state_w[:]
-        self.battery_L_pos, self.battery_L_quat = subtract_frame_transforms(
+        battery_L_pos_b, battery_R_pos_b = subtract_frame_transforms(
             robot_root_w[:, 0:3], robot_root_w[:, 3:7], self._battery_L.data.body_com_state_w[:,0,:3], self._battery_L.data.body_com_state_w[:,0,3:7]
         )
-        self.battery_L_orn_6D = quat_to_6d(self.battery_L_quat)
-        self.battery_R_pos, self.battery_R_quat = subtract_frame_transforms(
+        battery_L_b_7D = torch.cat([battery_L_pos_b, battery_R_pos_b], dim=-1)
+        battery_R_pos_b, battery_L_pos_b = subtract_frame_transforms(
             robot_root_w[:, 0:3], robot_root_w[:, 3:7], self._battery_R.data.body_com_state_w[:,0,:3], self._battery_R.data.body_com_state_w[:,0,3:7]
         )
-        self.battery_R_orn_6D = quat_to_6d(self.battery_R_quat)
+        battery_R_b_7D = torch.cat([battery_R_pos_b, battery_L_pos_b], dim=-1)
+        self.battery_poses_b = torch.stack((battery_L_b_7D, battery_R_b_7D), dim=1) # (num_envs, 2, 7), 0 for left, 1 for right
 
-        # compute intended battery's pose in base frame
-        battery_idx_exp = self.intended_targets[:,0].view(self.num_envs, 1, 1).expand(-1, 1, 7) # (num_envs, 1, 7)
-        battery_pos_all = torch.stack((self.battery_L_pos, self.battery_R_pos), dim=1) # (num_envs, 2, 3)
-        self.intended_battery_pos = torch.gather(battery_pos_all, dim=1, index=battery_idx_exp[:,:,:3]).squeeze(1) # (num_envs, 3)
+        # compute intended battery's poses in base frame
+        battery_targets_exp = self.intended_targets[:,0].view(self.num_envs, 1, 1).expand(-1, 1, 7) # (num_envs, 1, 7)
+        self.intended_battery_pose_b = torch.gather(self.battery_poses_b, dim=1, index=battery_targets_exp).squeeze(1) # (num_envs, 7)
 
-        battery_quat_all = torch.stack((self.battery_L_quat, self.battery_R_quat), dim=1) # (num_envs, 2, 4)
-        self.intended_battery_quat = torch.gather(battery_quat_all, dim=1, index=battery_idx_exp[:,:,3:7]).squeeze(1) # (num_envs, 4)
-        self.intended_battery_orn_6D = quat_to_6d(self.intended_battery_quat) # (num_envs, 6)
+        # compute intended battery's goal poses in base frame
+        placing_targets_exp = self.intended_targets[:,0].view(self.num_envs, 1, 1).expand(-1, 1, 7) # (num_envs, 1, 7)
+        self.intended_battery_goal_pose_b = torch.gather(self.placing_targets_7D_b, dim=1, index=placing_targets_exp).squeeze(1) # (num_envs, 7)
+
+        # compute fingertip 7D pose in base frame
+        robot_ee_pose_w = self._robot.data.body_com_state_w[:,9,0:7]
+        robot_root_pose_w = self._robot.data.root_state_w[:, 0:7]
+        robot_ee_pos_b, robot_ee_quat_b = subtract_frame_transforms(
+                robot_root_pose_w[:, 0:3], robot_root_pose_w[:, 3:7], robot_ee_pose_w[:, 0:3], robot_ee_pose_w[:, 3:7]
+            )        
+        ee_b = torch.cat([robot_ee_pos_b, robot_ee_quat_b], dim=-1)
+        offset_gripper_position = subtract_z_in_baseframe_batch(ee_b, z_offset=0.14)
+        self.ee_fingertip_b_7D = torch.cat([offset_gripper_position, robot_ee_quat_b], dim=-1)
+
+        # compute 10D robot state in base frame
+        self.curr_robot_state_b_10D = self.get_robot_state_b() # (num_envs, 10)
         
-        # compute intended target's pose in base frame
-        target_idx_exp = self.intended_targets[:,1].view(self.num_envs, 1, 1).expand(-1, 1, 7) # (num_envs, 1, 7)
-        target_pos_all = torch.stack((self.target_pos_L, self.target_pos_R), dim=1) # (num_envs, 2, 3)
-        self.intended_target_pos = torch.gather(target_pos_all, dim=1, index=target_idx_exp[:,:,:3]).squeeze(1) # (num_envs, 3)
+        # get curr teleop command 10D
+        self.teleop_comm_obs = self.training_demo_traj[self.env_idx, self.demo_idx, self.time_step_per_env, :] # (num_envs, 10)
 
-        target_quat_all = torch.stack((self.target_quat_L, self.target_quat_R), dim=1) # (num_envs, 2, 4)
-        self.intended_target_quat = torch.gather(target_quat_all, dim=1, index=target_idx_exp[:,:,3:7]).squeeze(1) # (num_envs, 4)
-        self.intended_target_orn_6D = quat_to_6d(self.intended_target_quat) # (num_envs, 6)
-
-        # finger qpos diff
-
-        if self.cfg.debug_intermediate_values:
-            self.marker1.visualize(self.fingertip_pos, self.ee_quat)
-            self.marker2.visualize(self.teleop_fingertip_pos, self.teleop_quat)
-            self.marker3.visualize(self.intended_battery_pos, self.intended_battery_quat)
-            self.marker4.visualize(self.intended_target_pos, self.intended_target_quat)
-
-            print("fingertip pos: ")
-            format_tensor(self.fingertip_pos)
+        # self.marker1.visualize(self.ee_fingertip_b_7D[:1,:3], self.ee_fingertip_b_7D[:1,3:7])
+        # self.marker2.visualize(self.intended_battery_goal_pose_b[:1,:3], self.intended_battery_goal_pose_b[:1,3:7])
+        # self.marker3.visualize(self.intended_battery_pose_b[:1,:3], self.intended_battery_pose_b[:1,3:7])
     
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self._battery_L = RigidObject(self.cfg.battery_L)
         self._battery_R = RigidObject(self.cfg.battery_R)
         self._battery_box = RigidObject(self.cfg.battery_box)
-
-        if self.cfg.enable_vision:
-            self._camera = TiledCamera(self.cfg.camera)
+        self._camera = TiledCamera(self.cfg.camera)
 
         self.scene.articulations["robot"] = self._robot
         self.scene.rigid_objects["battery_box"] = self._battery_box
         self.scene.rigid_objects["battery_L"] = self._battery_L
         self.scene.rigid_objects["battery_R"] = self._battery_R
-        if self.cfg.enable_vision:
-            self.scene.sensors["camera"] = self._camera
+        self.scene.sensors["camera"] = self._camera
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -520,25 +519,71 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.last_ee_goal = self.ee_goal_b.clone()
 
         if self.cfg.play_training_demo:
-            self.ee_goal_b = self.teleop_10D.clone()
+            goal_in_ee_fr = self.curr_comm_in_curr_ee_fr
+            ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
+            self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
         else: 
-            self.ee_goal_b = self.teleop_10D.clone() + self.cfg.alpha * self.ee_residual
+            goal_in_ee_fr = self.curr_comm_in_curr_ee_fr + self.cfg.alpha * self.ee_residual
+            ee_10D_b = self.curr_robot_ee_b.clone()
+            self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
+
+            if self.cfg.print_all_intermediate_value:
+                print(">>>>>>>>>>>>>>> POLICY OUTPUT <<<<<<<<<<<<<<<<")
+                print("base action (comm in ee fr): ")
+                format_tensor(self.curr_comm_in_curr_ee_fr)
+                print("residual: ")
+                format_tensor(self.ee_residual)
+                print("ee goal clean b: ")
+                format_tensor(self.ee_goal_b)
 
         ee_goal_filtered = self.cfg.tilde * self.ee_goal_b.clone() + (1-self.cfg.tilde) * self.last_ee_goal.clone()
         ee_goal_filtered[:,:3] = torch.clamp(ee_goal_filtered[:,:3], self.robot_position_lower_limits, self.robot_position_upper_limits)
         ee_goal_filtered[:,-1] = (ee_goal_filtered[:,-1] > 0.5).float()
 
+        if self.cfg.print_all_intermediate_value:
+            print("ee goal filtered: ", ee_goal_filtered)
+
+        self.ee_hist.append(ee_goal_filtered.clone())
+
+        if self.cfg.debug_ee:
+                print("ee goal")
+                format_tensor(ee_goal_filtered)
+                print("current ee")
+                format_tensor(self.get_robot_state_b())       
+
         self.joint_pos = self.get_joint_pos_from_ee_pos_10d(self.diff_ik_controller, ee_goal_filtered)                                  # ee_goal always abs coordinates
         self.robot_dof_targets[:] = torch.clamp(self.joint_pos, self.robot_dof_lower_limits[:8], self.robot_dof_upper_limits[:8])       # (num_envs, 8)
         self.time_step_per_env += 1
+        if self.cfg.print_all_intermediate_value:
+            print("robot joint pose target")
+            format_tensor(self.robot_dof_targets)
+
+        # self.action_list.append(ee_goal_filtered.clone())
+        # if self.time_step_per_env == 399:
+        #     actions = np.concatenate([t.detach().cpu().numpy() for t in self.action_list], axis=0)  # shape: (100, 7)
+
+        #     time_steps = np.arange(399)
+
+        #     # Create 10 subplots (one for each acti dim)
+        #     fig, axs = plt.subplots(10, 1, figsize=(10, 14), sharex=True)
+
+        #     # Loop through each acti dim (0 to 9)
+        #     for dim in range(10):
+        #         axs[dim].plot(time_steps, actions[:, dim], label=f'action over time')
+        #         axs[dim].set_ylabel(f'action dim {dim+1}')
+        #         if dim == 0:
+        #             axs[dim].legend(loc='upper right')
+                    
+        #     axs[-1].set_xlabel('Time Step')
+        #     plt.tight_layout()
+        #     plt.suptitle('Actions over Time w/ Low-pass Filter lambda=7 & smoothing reward', fontsize=16)
+        #     plt.show()
 
     def _apply_action(self): # TODO: check this
         # apply action for arm and drive joint
         self._robot.set_joint_position_target(self.robot_dof_targets[:,:-1], joint_ids=[i for i in range(self.num_eff_joints-1)])
 
         # self.gripper_force = torch.norm(self._contact_sensor1.data.net_forces_w - self._contact_sensor2.data.net_forces_w)
-
-        # update finger joint diff for real time adjustments
         self.finger_joint_dif = self._robot.data.joint_pos[:,7:].max(dim=1).values - self._robot.data.joint_pos[:,7:].min(dim=1).values
 
         finger_target = self.robot_dof_targets[:,-1:]
@@ -547,23 +592,31 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         invalid_env_ids =  self.finger_joint_dif > 0.01 #| self.gripper_force > 30 #NOTE: stick to 0.05, smaller value -> cube slips
         finger_target[invalid_env_ids] = torch.mean(self._robot.data.joint_pos[invalid_env_ids,7:], dim=1).unsqueeze(1)#.repeat(1,6)
     
-        self._robot.set_joint_position_target(finger_target, joint_ids=[7])     
+        self._robot.set_joint_position_target(finger_target, joint_ids=[7])
+
+        if self.cfg.debug_joint_pos:
+            print("robot joint pose")
+            format_tensor(self._robot.data.joint_pos)
+            print("robot joint pose target")
+            format_tensor(self._robot.data.joint_pos_target)        
 
     def step(self, ee_residual):
         _return = super().step(ee_residual)
-        if self.cfg.enable_vision:
-            self._camera.update(dt=self.dt)
+
+        self._camera.update(dt=self.dt)
         return _return
 
     # post-physics step calls 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self._compute_intermediate_values()
+        # cube_y = self._cube.data.root_pos_w[:, 1] - self.scene.env_origins[:, 1]
+        # cube_x = self._cube.data.root_pos_w[:, 0] - self.scene.env_origins[:, 0]
+        # terminated = (cube_y > 0.2) | (cube_y < -0.2) | (cube_x > 0.6) | (cube_x < 0.1)
 
-        # terminated = self.finger_joint_dif > 0.5
-        terminated = self._robot.data.body_com_state_w[:, 9, 2] < 0.17 #NOTE: 9th body is link_eef
+        self.finger_joint_dif = self._robot.data.joint_pos[:,7:].max(dim=1).values - self._robot.data.joint_pos[:,7:].min(dim=1).values
+        terminated = self.finger_joint_dif > 0.5
+        terminated |= self._robot.data.body_com_state_w[:, 9, 2] < 0.165 #NOTE: 9th body is link_eef
 
-        # if terminated:
-        #     import pdb; pdb.set_trace()
         truncated = self.episode_length_buf >= self.max_episode_length - 1
 
         return terminated, truncated
@@ -593,7 +646,9 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self._update_human_intentions(env_ids)
 
         # clear obs buffers
-        self.teleop_10D[env_ids,:] = self.training_demo_traj[env_ids, self.demo_idx[env_ids], 0, :]
+        self.robot_state_hist.clear_envs(env_ids)
+        self.teleop_comm_hist.clear_envs(env_ids)
+        self.teleop_comm_obs[env_ids,:] = self.training_demo_traj[env_ids, self.demo_idx[env_ids], 0, :]
 
     def _update_human_intentions(self, env_ids: torch.Tensor):
         """
@@ -630,11 +685,12 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         grasp_pos_b   = pos[idxs, close_t]            # (N, 3)
         release_pos_b = pos[idxs, open_t]             # (N, 3)
 
+
         # 4) compute Euclidean dists to each object, at each event
-        d1_grasp   = (grasp_pos_b   - self.battery_L_pos[env_ids, :]).norm(dim=1)  # (N,)
-        d2_grasp   = (grasp_pos_b   - self.battery_R_pos[env_ids, :]).norm(dim=1)  # (N,)
-        d1_release = (release_pos_b - self.target_pos_L[env_ids, :]).norm(dim=1)  # (N,)
-        d2_release = (release_pos_b - self.target_pos_R[env_ids, :]).norm(dim=1)  # (N,)
+        d1_grasp   = (grasp_pos_b   - self.battery_poses_b[env_ids, 0, :3]).norm(dim=1)  # (N,)
+        d2_grasp   = (grasp_pos_b   - self.battery_poses_b[env_ids, 1, :3]).norm(dim=1)  # (N,)
+        d1_release = (release_pos_b - self.placing_targets_7D_b[env_ids, 0, :3]).norm(dim=1)  # (N,)
+        d2_release = (release_pos_b - self.placing_targets_7D_b[env_ids, 1, :3]).norm(dim=1)  # (N,)
 
         # 5) decide which is closer: 0 if obj1, 1 if obj2
         intent_grasp   = (d2_grasp   < d1_grasp).long()    # (N,)
@@ -688,7 +744,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         # # update initial pose of demo trajs
         if apply_dmr: # TODO: check this!!!! Learn indexing
             # ee after dmr
-            initial_ee = self.get_robot_ee_10D_b().clone()
+            initial_ee = self.get_robot_state_b().clone()
             # interpolated from randomized ee to demo traj            
             initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.demo_traj[env_ids, self.demo_idx[env_ids], 50, :], 50) # (env_ids, 1, 50, 10)
             # fill in initial traj
@@ -698,10 +754,12 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         if not add_noise:
             self.training_demo_traj = self.demo_traj
         else:
-            step_interval = int(torch.randint(30, 41, (1,)).item())
-            noise_level = torch.rand(1).item() * (0.02 - 0.01) + 0.02
+            step_interval = int(torch.randint(20, 41, (1,)).item())
+            noise_level = torch.rand(1).item() * (0.04 - 0.02) + 0.02
             beta_filter = torch.rand(1).item() * (0.7 - 0.5) + 0.5
             self.training_demo_traj = smooth_noisy_trajectory(self.demo_traj, env_ids, step_interval=step_interval, noise_level=noise_level, beta_filter=beta_filter)
+
+        # 
 
     def _step_sim_no_action(self):
         """Step the simulation without an action. Used for resets."""
@@ -720,8 +778,8 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self._reset_robot_state(env_ids, self.cfg.apply_dmr)
         self._reset_assets(env_ids, self.cfg.apply_dmr)
         self._reset_buffers(env_ids)
-        if self.cfg.enable_vision:
-            self._camera.reset(env_ids)
+        
+        self._camera.reset(env_ids)
         self.diff_ik_controller.reset(env_ids) # type: ignore
 
         self._step_sim_no_action()
@@ -745,87 +803,144 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self._battery_R.write_root_state_to_sim(root_state=reseted_root_states, env_ids=env_ids) #NOTE: no render on reset
         self._battery_R.reset(env_ids)
 
-        # no dmr for battery box
-        reseted_root_states = self._battery_box.data.default_root_state.clone()    
+        reseted_root_states = self._battery_box.data.default_root_state.clone()
+        if self.cfg.apply_dmr:
+            reseted_root_states[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x 
+            reseted_root_states[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
+        
         reseted_root_states[env_ids,:3] += self.scene.env_origins[env_ids,:3]
         self._battery_box.write_root_state_to_sim(root_state=reseted_root_states, env_ids=env_ids) #NOTE: no render on reset
         self._battery_box.reset(env_ids)
 
-    def _get_observations(self) -> dict:       
-        if self.cfg.enable_vision:
-            depth_clean = self._camera.data.output["distance_to_image_plane"].permute(0,3,1,2)
-            depth_filtered = filter_sim_depth(depth_clean) # (num_envs, 120*120) which should give same reading as real
-            normalized_depth = normalize_depth_01(depth_filtered)
+    def _get_observations(self) -> dict:
+        self.curr_robot_ee_b = self.get_robot_state_b() # reset issues
+        self.robot_state_hist.append(self.curr_robot_ee_b)
+        prev_robot_ee_b = self.robot_state_hist.get_oldest_obs() 
+        prev_ee_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, prev_robot_ee_b) 
 
-        if self.num_envs == 1 and self.cfg.enable_vision: 
+        curr_teleop_comm_b = self.teleop_comm_obs.clone()
+        self.curr_comm_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, curr_teleop_comm_b)
+        # self.sim_teleop_ee_fr.append(self.curr_comm_in_curr_ee_fr.clone())
+        # if len(self.sim_teleop_ee_fr) > 400:
+        #     save_to_txt(self.sim_teleop_ee_fr, "RRL/sim2real/sim_traj1/teleop_comm_ee_fr.txt")
+        #     print("teleop comm ee fr saved")
+        #     exit()
+        # self.sim_teleop_base_fr.append(curr_teleop_comm_b.clone())
+        # if len(self.sim_teleop_base_fr) == 400:
+        #     save_to_txt(self.sim_teleop_base_fr, "RRL/sim2real/sim_traj1/teleop_comm_base_fr.txt")
+        #     print("teleop comm base fr saved")
+        #     exit()
+
+        # print("curr comm in curr ee fr: ", self.curr_comm_in_curr_ee_fr)
+
+        # cube_8D_w = self._robot.data.root_state_w[:]
+        # cube_pos_b, cube_quat_b = subtract_frame_transforms(
+        #     cube_8D_w[:, 0:3], cube_8D_w[:, 3:7], self._cube.data.body_com_state_w[:,0,:3], self._cube.data.body_com_state_w[:,0,3:7]
+        # )
+        # cube_7D_b = torch.cat([cube_pos_b, cube_quat_b], dim=-1)
+        # cube_10D_b = ee_7D_to_10D(cube_7D_b)
+        # cube_pose_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, cube_10D_b)[:,:9]
+        
+        if self.cfg.print_all_intermediate_value:
+            print(">>>>>>>>>>>>>>> POLICY INPUTS <<<<<<<<<<<<<<<<")
+            print("-------------- 1. 10D observations in base frame --------------")
+            print("curr robot ee b: ")
+            format_tensor(self.curr_robot_ee_b)
+            print("curr teleop comm b: ")
+            format_tensor(curr_teleop_comm_b)
+            # print("cube pose b: ")
+            # format_tensor(cube_10D_b)
+
+        # visualize obs in base fr
+        # if self.cfg.mark_obs:
+            # self.marker1.visualize(prev_robot_ee_b[:,:3], ee_10D_to_8D(prev_robot_ee_b)[:,3:7])
+            # self.marker2.visualize(self.ee_goal_b[:,:3], ee_10D_to_8D(self.ee_goal_b)[:,3:7])
+            # self.marker3.visualize(self._robot.data.body_com_pos_w[:,9,:3])
+
+        robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
+                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
+                                        0.0, # gripper
+                                        ], device=self.device).repeat(self.num_envs, 1) 
+        
+
+        robot_state_max = torch.tensor([0.1, 0.1, 0.1,  # position
+                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
+                                        1.0, # gripper
+                                        ], device=self.device).repeat(self.num_envs, 1) 
+        
+        teleop_comm_min = torch.tensor([-0.05, -0.05, -0.05,  # position
+                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
+                                        0.0, # gripper
+                                        ], device=self.device).repeat(self.num_envs, 1) 
+        
+
+        teleop_comm_max = torch.tensor([0.05, 0.05, 0.05,  # position
+                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation 
+                                        1.0, # gripper
+                                        ], device=self.device).repeat(self.num_envs, 1) 
+
+        cube_state_min = torch.tensor([-0.1, -0.1, -0.0,  # position
+                                        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation
+                                        ], device=self.device).repeat(self.num_envs, 1)
+        
+        cube_state_max = torch.tensor([0.2, 0.1, 0.5,  # position
+                                        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, # orientation
+                                        ], device=self.device).repeat(self.num_envs, 1)
+                                        
+        normalized_robot_state_obs = (prev_ee_in_curr_ee_fr - robot_state_min) / (robot_state_max - robot_state_min)
+        normalized_teleop_comm_obs = (self.curr_comm_in_curr_ee_fr - teleop_comm_min) / (teleop_comm_max - teleop_comm_min)
+        # normalized_cube_pose_obs = (cube_pose_in_curr_ee_fr - cube_state_min) / (cube_state_max - cube_state_min)
+
+        depth_clean = self._camera.data.output["distance_to_image_plane"].permute(0,3,1,2)
+        depth_filtered = filter_sim_depth(depth_clean) # (num_envs, 120*120) which should give same reading as real
+        normalized_depth = normalize_depth_01(depth_filtered)
+
+        if self.num_envs == 1: 
             depth_vis = filter_depth_for_visualization(depth_filtered.reshape(120,120).detach().cpu().numpy(), unit='m') # only works for 1 env
             cv2.imshow("depth_image", depth_vis)
             cv2.waitKey(1)
         #     save_tensor_as_txt(depth_filtered, "RRL/sim2real/vision_gap/raw/visual_raw_obs_sim")
         #     import pdb; pdb.set_trace()
-        
-        if self.cfg.enable_vision:
-            actor_obs = torch.cat(
-                (
-                    self.fingertip_pos,
-                    self.ee_orn_6D,
-                    self.gripper_binary,
-                    self.teleop_fingertip_pos,
-                    self.teleop_orn_6D,
-                    self.teleop_gripper_binary,
-                    normalized_depth,
-                ),
-                dim=-1,
-            )
-        else:
-            actor_obs = torch.cat(
-                (
-                    self.fingertip_pos,
-                    self.ee_orn_6D,
-                    self.gripper_binary,
-                    self.teleop_fingertip_pos,
-                    self.teleop_orn_6D,
-                    self.teleop_gripper_binary,
-                    self.battery_L_pos,
-                    self.battery_L_orn_6D,
-                    self.battery_R_pos,
-                    self.battery_R_orn_6D,
-                    self.box_lower_limits,
-                    self.box_upper_limits,
-                ),
-                dim=-1,
-            )
 
+        # save_tensor_as_txt(normalized_depth, "RRL/sim2real/vision_gap/input/visual_input_obs_sim")
+        # import pdb; pdb.set_trace()
+    
+        actor_obs = torch.cat(
+            (
+                normalized_robot_state_obs,
+                normalized_teleop_comm_obs,
+                normalized_depth,
+            ),
+            dim=-1,
+        )
         if self.collect_min_max_obs_values:
             self.collected.append(actor_obs.clone())
 
-        if self.cfg.use_privilege_obs and not self.cfg.enable_vision:
-            critic_obs = torch.cat(
-                (
-                    self.fingertip_pos,
-                    self.ee_orn_6D,
-                    self.gripper_binary,
-                    self.teleop_fingertip_pos,
-                    self.teleop_orn_6D,
-                    self.teleop_gripper_binary,
-                    self.battery_L_pos,
-                    self.battery_L_orn_6D,
-                    self.battery_R_pos,
-                    self.battery_R_orn_6D,
-                    self.intended_battery_pos,
-                    self.intended_battery_orn_6D,
-                    self.intended_target_pos,
-                    self.intended_target_orn_6D,
-                    self.box_lower_limits,
-                    self.box_upper_limits,
-                ),
-                dim=-1,
-            )
+        if self.cfg.print_all_intermediate_value:
+            print("------------ 2. 10D normalized rel obs (actual input) ------------")
+            print("normalized robot state obs")
+            format_tensor(normalized_robot_state_obs)
+            print("normalized teleop comm obs")
+            format_tensor(normalized_teleop_comm_obs)
+            # print("normalized cube pose obs")
+            # format_tensor(normalized_cube_pose_obs)
 
-            return {"policy": torch.clamp(actor_obs, -5.0, 5.0),
-                    "critic": torch.clamp(critic_obs, -5.0, 5.0)}
-        else: 
-            return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
+        # if self.cfg.use_privilege_obs:
+        #     critic_obs = torch.cat(
+        #         (
+        #             normalized_robot_state_obs,
+        #             normalized_teleop_comm_obs,
+        #             normalized_cube_pose_obs,
+        #             # self.demo_idx.unsqueeze(1),
+        #             normalized_depth,
+        #         ),
+        #         dim=-1,
+        #     )
+
+        #     return {"policy": torch.clamp(actor_obs, -5.0, 5.0),
+        #             "critic": torch.clamp(critic_obs, -5.0, 5.0)}
+        # else: 
+        return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
 
     def _compute_rewards(self):        
         # RESIDUAL PENALTY
@@ -835,26 +950,23 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         residual_rate = torch.norm((self.ee_residual.clone() - self.last_ee_residual.clone()), p=2, dim=-1)
 
         # gripper height
-        # print(self.ee_goal_b[:,2])
-        gripper_height_penalty = torch.where(self.ee_goal_b[:,2] < 0.2, 1.0, 0.0)
+        gripper_height_penalty = torch.where(self.ee_goal_b[:,2] < 0.17, 1.0, 0.0)
 
         # gripper box collision
-        collided = (self.fingertip_pos >= self.box_lower_limits) & (self.fingertip_pos <= self.box_upper_limits) # TODO: check bounds
+        collided = (self.ee_fingertip_b_7D[:,:3] >= self.box_lower_limits) & (self.ee_fingertip_b_7D[:,:3] <= self.box_upper_limits)
         collided = collided.all(dim=1)
         collision_penalty = torch.where(collided, 1.0, 0.0)
 
         # fingertip battery dist
-        intended_gripper_pos = offset_b_in_target_fr(self.intended_battery_pos, self.intended_battery_quat, [0.0, 0.025, 0.0])
-        # self.marker5.visualize(intended_gripper_pos, self.intended_battery_quat)
-        fingertip_batter_dist = torch.norm(intended_gripper_pos - self.fingertip_pos, dim=1)
+        fingertip_batter_dist = torch.norm(self.intended_battery_pose_b[:,:3] - self.ee_fingertip_b_7D[:,:3], dim=1)
         fingertip_battery_dist_reward = torch.exp(-fingertip_batter_dist / self.cfg.fingertip_dist_std)
 
         # battery goal dist
-        baterry_goal_dist = torch.norm(self.intended_target_pos - self.intended_battery_pos, dim=1)
-        baterry_goal_dist_reward = torch.exp(-baterry_goal_dist / self.cfg.fingertip_dist_std) * (baterry_goal_dist < 0.15)
-        # print(baterry_goal_dist)
+        baterry_goal_dist = torch.norm(self.intended_battery_goal_pose_b[:,:3] - self.intended_battery_pose_b[:,:3], dim=1)
+        baterry_goal_dist_reward = torch.exp(-baterry_goal_dist / self.cfg.fingertip_dist_std)
 
         # completion reward at end of episode
+        baterry_goal_dist = torch.norm(self.intended_battery_goal_pose_b[:,:3] - self.intended_battery_pose_b[:,:3], dim=1)
         completion_condition = (baterry_goal_dist < 0.05) & (self.episode_length_buf >= self.max_episode_length - 1 - 50) # reward for completion in the last 50 time steps!
         completion_reward = torch.where(completion_condition, 1.0, 0.0)
 
@@ -895,40 +1007,13 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         filteredpairs_rel = filteredpairs_api.CreateFilteredPairsRel()
         filteredpairs_rel.AddTarget(prim2)
         stage.Save()
-
-    def get_teleop_state_info_b(self):
-        """
-        return:
-            get current teleop state in the base frame
-            tuple: teleop_pos, teleop_quat, teleop_orn_6D, finger_status
-        """
-        teleop_10D = self.training_demo_traj[self.env_idx, self.demo_idx, self.time_step_per_env, :]
-        teleop_pos = teleop_10D[:,:3].clone()
-        teleop_quat = quat_from_6d(teleop_10D[:,3:9].clone())
-        teleop_orn_6D = teleop_10D[:,3:9].clone()
-        teleop_finger_status = teleop_10D[:,-1].unsqueeze(1).clone()
-
-        return teleop_pos, teleop_quat, teleop_orn_6D, teleop_finger_status
     
-    
-    def get_teleop_ee_10D_b(self):
-        teleop_pos, _, teleop_orn_6D, finger_status = self.get_teleop_state_info_b()
-        teleop_10D_b = torch.cat((teleop_pos, teleop_orn_6D, finger_status), dim=-1)
-
-        return teleop_10D_b
-
-    def get_teleop_ee_7D_b(self):
-        teleop_pos, teleop_quat, _, _ = self.get_teleop_state_info_b()
-        teleop_7D_b = torch.cat((teleop_pos, teleop_quat), dim=-1)
-
-        return teleop_7D_b
-
-    def get_robot_state_info_b(self):
+    def get_robot_state_b(self):
         """
         return: 
-            get current robot state in the base frame
-            tuple: ee_pos, ee_orn_quat, ee_orn_6D, finger_status
+            get current robot state in the base frame, (num_envs, 10)
         """
+
         # ee and root pose in world frame
         curr_ee_pos_w = self._robot.data.body_com_state_w[:,9,:]
         curr_root_w = self._robot.data.root_state_w[:]
@@ -942,20 +1027,12 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         curr_finger_status = torch.mean(self._robot.data.joint_pos[:,7:], dim=1).unsqueeze(1)
         curr_finger_status = (curr_finger_status > 0.2).float() # convert gripper qpos to binary
 
-        return curr_ee_pos_b, curr_ee_quat_b, curr_orient_6d, curr_finger_status
-    
-    def get_robot_ee_7D_b(self):
-        ee_pos, ee_quat, _, _ = self.get_robot_state_info_b()
-        ee_7D_b = torch.cat((ee_pos, ee_quat), dim=-1) # (num_envs, 7)
-        return ee_7D_b
-    
-    def get_robot_ee_10D_b(self):
-        ee_pos, _, ee_orn_6D, finger_status = self.get_robot_state_info_b()
-        ee_10D_b = torch.cat((ee_pos, ee_orn_6D, finger_status), dim=-1) # (num_envs, 10)
-        return ee_10D_b
+        curr_robot_state_b = torch.cat((curr_ee_pos_b, curr_orient_6d, curr_finger_status), dim=-1)
+
+        return curr_robot_state_b
     
     def get_joint_pos_from_ee_pos_10d(self, controller: DifferentialIKController, ee_goal):
-        curr_ee_b = self.get_robot_ee_10D_b() # (num_envs, 10)
+        curr_ee_b = self.get_robot_state_b() # (num_envs, 10)
         curr_ee_quat_b = quat_from_6d(curr_ee_b[:,3:9])
 
         ee_goal_quat = quat_from_6d(ee_goal[:,3:9])
@@ -967,7 +1044,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         jacobian = self._robot.root_physx_view.get_jacobians()[:,ee_jacobi_idx,:, self.joint_ids[:7]] #(num_envs, 6, 7)
         joint_pos = self._robot.data.joint_pos[:,self.joint_ids[:7]] # (num_envs, 7)
 
-        joint_pos_des_arm = controller.compute(self.ee_pos, self.ee_quat, jacobian, joint_pos)
+        joint_pos_des_arm = controller.compute(curr_ee_b[:,:3], curr_ee_quat_b, jacobian, joint_pos)
 
         gripper_status = ee_goal[:, -1].unsqueeze(1).clone() # binary gripper + residual output
         gripper_status[gripper_status > 0.5] = 0.6          # NOTE: close gripper in qpos

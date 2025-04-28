@@ -48,7 +48,7 @@ class XArmResidualCubePPORunnerCamV2Cfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 40000
     save_interval = 100
     experiment_name = "xarm-cube-residual"
-    empirical_normalization = False
+    empirical_normalization = True
     policy = RslRlResidualPpoActorCriticCfg(
         class_name="ResidualActorCriticVisual",
         init_logstd=-3.0,

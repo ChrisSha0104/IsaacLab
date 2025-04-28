@@ -588,7 +588,7 @@ def cubic_spline_nd_function_torch(points: torch.Tensor,
     return spline_func
 
 
-def subtract_z_in_baseframe_batch(ee_pose, z_offset=0.15):
+def offset_b_in_target_fr(pos, quat, displacement=[0.0, 0.0, 0.15]):
     """
     Subtracts a given offset along the base frame's z-axis from the end-effector position
     for multiple environments.
@@ -600,20 +600,17 @@ def subtract_z_in_baseframe_batch(ee_pose, z_offset=0.15):
     Returns:
         torch.Tensor: Adjusted end-effector positions after subtracting z-offset, shape (num_envs, 3).
     """
-    num_envs = ee_pose.shape[0]
+    num_envs = pos.shape[0]
 
-    position = ee_pose[:, :3]
-    quaternion = ee_pose[:, 3:]
+    R = matrix_from_quat(quat)
 
-    R = matrix_from_quat(quaternion)
-
-    displacement_base = torch.tensor([0.0, 0.0, z_offset], dtype=ee_pose.dtype, device=ee_pose.device).expand(num_envs, 3)
+    displacement_base = torch.tensor(displacement, dtype=pos.dtype, device=pos.device).expand(num_envs, 3)
 
     # Transform displacement into each environment’s EE frame
     displacement_ee = torch.bmm(R, displacement_base.unsqueeze(-1)).squeeze(-1)  # (num_envs, 3)
 
     # Adjust position
-    new_position = position + displacement_ee  # (num_envs, 3)
+    new_position = pos + displacement_ee  # (num_envs, 3)
     
     return new_position
 
