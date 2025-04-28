@@ -9,5 +9,5 @@
 
 
 # battery task
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --headless --num_envs 512 --run_name battery_cam_v0 --max_iterations 2000
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --headless --num_envs 512 --run_name battery_cam_v1 --max_iterations 2000
 

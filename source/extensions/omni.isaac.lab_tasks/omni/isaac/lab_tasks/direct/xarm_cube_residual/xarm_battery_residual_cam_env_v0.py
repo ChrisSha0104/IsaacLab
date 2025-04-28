@@ -72,17 +72,17 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
             dynamic_friction=1.0,
             restitution=0.0,
         ),
-        physx=PhysxCfg(
-            solver_type=1,
-            max_position_iteration_count=40,  # Important to avoid interpenetration.
-            max_velocity_iteration_count=1,
-            bounce_threshold_velocity=0.2,
-            friction_offset_threshold=0.01,
-            friction_correlation_distance=0.00625,
-            gpu_max_rigid_contact_count=2**23,
-            gpu_max_rigid_patch_count=2**23,
-            gpu_max_num_partitions=1,  # Important for stable simulation.
-        ),
+        # physx=PhysxCfg(
+        #     solver_type=1,
+        #     max_position_iteration_count=40,  # Important to avoid interpenetration.
+        #     max_velocity_iteration_count=1,
+        #     bounce_threshold_velocity=0.2,
+        #     friction_offset_threshold=0.01,
+        #     friction_correlation_distance=0.00625,
+        #     gpu_max_rigid_contact_count=2**23,
+            # gpu_max_rigid_patch_count=2**23,
+            # gpu_max_num_partitions=1,  # Important for stable simulation.
+        # ),
     )
 
     # scene
@@ -102,13 +102,13 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
                 max_linear_velocity=1000.0,
                 max_angular_velocity=3666.0,
                 enable_gyroscopic_forces=True,
-                solver_position_iteration_count=40,
+                solver_position_iteration_count=16,
                 solver_velocity_iteration_count=1,
                 # max_contact_impulse=1e32,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=False, 
-                solver_position_iteration_count=192, 
+                enabled_self_collisions=True, 
+                solver_position_iteration_count=16, 
                 solver_velocity_iteration_count=1
             ), 
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),                  
@@ -168,7 +168,7 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     battery_R = RigidObjectCfg(
             prim_path="/World/envs/env_.*/Battery_R",
             init_state=RigidObjectCfg.InitialStateCfg(
-                pos=(0.495, -0.0542, 0.0),
+                pos=(0.495, -0.0542, 0.0), # demo 1 (0.495, -0.0542, 0.0)
                 rot=(0.707, 0.707, 0, 0),
             ),
             spawn=sim_utils.UsdFileCfg(
@@ -182,7 +182,7 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
                     max_depenetration_velocity=5.0,
                     disable_gravity=False,
                 ),
-                mass_props=sim_utils.MassPropertiesCfg(mass=2.0),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
                 collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
             ),
 
@@ -205,7 +205,7 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
                     max_depenetration_velocity=5.0,
                     disable_gravity=False,
                 ),
-                mass_props=sim_utils.MassPropertiesCfg(mass=2.0),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
                 collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
             ),
         )
@@ -269,7 +269,7 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     training_data_path = "RRL/tasks/battery/training_set1"
 
     # visualization options: (All turned to false during training)
-    play_training_demo = False
+    play_training_demo = True
     play_real_demo = False
     mark_obs = False
 
@@ -277,7 +277,7 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     show_camera = False                  # option only used for play
 
     # debug options
-    print_all_intermediate_value = False
+    print_all_intermediate_value = False #TODO: change this into a dict
     debug_ee = False
     debug_joint_pos = False
     store_obs = False
@@ -288,7 +288,7 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     visual_idx_critic = [20,20+120*120]
 
     # training options:
-    add_noise_to_demo = True
+    add_noise_to_demo = False
     learn_std = True
     use_privilege_obs = True
     apply_dmr = False
@@ -306,8 +306,8 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     # reward scale RESIDUAL
     # --- task-completion ---
     completion_reward_scale = 1.0
-    fingertip_dist_reward_scale = 0.1
-    battery_goal_dist_reward_scale = 0.1
+    fingertip_dist_reward_scale = 0.3
+    battery_goal_dist_reward_scale = 0.3
 
     # --- auxiliary ---
     residual_penalty_scale = -0.1
@@ -510,10 +510,10 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
 
         # filter finger collision
-        # self.create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_outer_knuckle")
-        # self.create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_outer_knuckle")
-        # self.create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_finger")
-        # self.create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_finger")
+        self.create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_outer_knuckle")
+        self.create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_outer_knuckle")
+        self.create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_finger")
+        self.create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_finger")
 
         # clone, filter, and replicate
         self.scene.clone_environments(copy_from_source=False) 
@@ -701,6 +701,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         grasp_pos_b   = pos[idxs, close_t]            # (N, 3)
         release_pos_b = pos[idxs, open_t]             # (N, 3)
 
+
         # 4) compute Euclidean dists to each object, at each event
         d1_grasp   = (grasp_pos_b   - self.battery_poses_b[env_ids, 0, :3]).norm(dim=1)  # (N,)
         d2_grasp   = (grasp_pos_b   - self.battery_poses_b[env_ids, 1, :3]).norm(dim=1)  # (N,)
@@ -761,9 +762,9 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
             # ee after dmr
             initial_ee = self.get_robot_state_b().clone()
             # interpolated from randomized ee to demo traj            
-            initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.demo_traj[env_ids, self.demo_idx[env_ids], 20, :], 20) # (env_ids, 1, 50, 10)
+            initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.demo_traj[env_ids, self.demo_idx[env_ids], 50, :], 50) # (env_ids, 1, 50, 10)
             # fill in initial traj
-            self.demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
+            self.demo_traj[env_ids, self.demo_idx[env_ids], :50, :] = initial_traj.clone()
         
         # add noise to demo traj
         if not add_noise:
@@ -790,9 +791,9 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         if self.collect_min_max_obs_values and len(self.collected) > 0: 
             self._collect_obs_data_on_termination(env_ids)
         
-        self._reset_buffers(env_ids)
         self._reset_robot_state(env_ids, self.cfg.apply_dmr)
         self._reset_assets(env_ids, self.cfg.apply_dmr)
+        self._reset_buffers(env_ids)
         
         self._camera.reset(env_ids)
         self.diff_ik_controller.reset(env_ids) # type: ignore
@@ -1062,7 +1063,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         joint_pos_des_arm = controller.compute(curr_ee_b[:,:3], curr_ee_quat_b, jacobian, joint_pos)
 
         gripper_status = ee_goal[:, -1].unsqueeze(1).clone() # binary gripper + residual output
-        gripper_status[gripper_status > 0.5] = 0.6          # NOTE: close gripper in qpos
+        gripper_status[gripper_status > 0.5] = 0.62          # NOTE: close gripper in qpos
         gripper_status[gripper_status < 0.5] = 0.0          # NOTE: open gripper in qpos
 
         joint_pos_des = torch.cat((joint_pos_des_arm, gripper_status), dim=-1)
