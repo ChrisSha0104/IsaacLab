@@ -17,6 +17,9 @@ from omni.isaac.lab.sim.converters.mesh_converter_cfg import MeshConverterCfg
 from omni.isaac.lab.sim.schemas import schemas
 from omni.isaac.lab.sim.utils import export_prim_to_file
 
+from pxr import PhysxSchema
+
+
 
 class MeshConverter(AssetConverterBase):
     """Converter for a mesh file in OBJ / STL / FBX format to a USD file.
@@ -130,6 +133,11 @@ class MeshConverter(AssetConverterBase):
                     schemas.define_collision_properties(
                         prim_path=child_mesh_prim.GetPath(), cfg=cfg.collision_props, stage=stage
                     )
+                if cfg.collision_approximation == "convexDecomposition":
+                    physx_convex_api = PhysxSchema.PhysxConvexDecompositionCollisionAPI.Apply(child_mesh_prim)
+                    physx_convex_api.GetMaxConvexHullsAttr().Set(cfg.max_convex_hulls)
+                    # physx_convex_api.GetErrorPercentageAttr().Set(0.01)
+                    # physx_convex_api.GetVoxelResolutionAttr().Set(1000000) 
         # Delete the old Xform and make the new Xform the default prim
         stage.SetDefaultPrim(xform_prim)
         # Apply default Xform rotation to mesh -> enable to set rotation and scale

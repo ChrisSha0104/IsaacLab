@@ -182,16 +182,19 @@ class XArmCubeResidualStateLocalBinaryV3EnvCfg(DirectRLEnvCfg):
     mark_obs = False
 
     # debug options
+    print_all_intermediate_value = False
     debug_ee = False
     debug_joint_pos = False
-    store_obs = False
-
+    store_traj_data = True
+    use_visual_encoder = False
+    visual_idx_actor = [29, 29]
+    visual_idx_critic = [29, 29]
     # training options:
     add_noise_to_demo = True
     use_visual_encoder = False
     learn_std = True
     use_privilege_obs = True
-    apply_dmr = True
+    apply_dmr = False
     num_demos = 2 # TODO change to 3
     state_history_length = 50 # 1.5s ago
 
@@ -290,7 +293,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self.ee_residual = torch.zeros((self.num_envs, 10), device=self.device)
         self.last_ee_residual = self.ee_residual.clone()
 
-        self.action_list = []
+        self.sim_ee_goal_with_res = []
 
         self.teleop_comm_hist = HistoryBuffer(self.num_envs, self.cfg.state_history_length, self.cfg.action_space, device=self.device) # (num_envs, state_history_length, action_space) 
         self.robot_state_hist = HistoryBuffer(self.num_envs, self.cfg.state_history_length, self.cfg.action_space, device=self.device) # (num_envs, state_history_length, action_space+6)
@@ -330,13 +333,8 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         self.collected = []
         self.collect_min_max_obs_values = False
-        
-        self.teleop_comm_in_ee_fr = torch.from_numpy(np.loadtxt("RRL/sim2real/input_output/traj2/teleop_base_ee_list.txt")).float() # without gripper pose
-        self.teleop_comm_in_ee_fr = self.teleop_comm_in_ee_fr.to('cuda:0')[:, :]
-        self.teleop_comm_in_ee_fr[:,-1] = (self.teleop_comm_in_ee_fr[:,-1] > 0.2).float()
-
-        self.sim_teleop_ee_fr = []
         self.sim_teleop_base_fr = []
+        self.sim_robot_ee_b = []
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -368,10 +366,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         # for RP, the arg actions is the residual!
         self.last_ee_residual = self.ee_residual.clone()
         self.ee_residual = ee_residual.clone()
-        # print("ee residual")
-        # format_tensor(self.ee_residual)
-        # print("demo ee")
-        # format_tensor(self.training_demo_traj[self.env_idx, self.action_idx, self.demo_idx] + self.init_ee)
         
         self.last_ee = self.ee_goal_b.clone()
 
@@ -379,17 +373,23 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             goal_in_ee_fr = self.curr_comm_in_curr_ee_fr
             ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
-        elif self.cfg.play_real_demo:
-            goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env[0]].unsqueeze(0)
-            ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
-            self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
+        # elif self.cfg.play_real_demo:
+        #     goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env[0]].unsqueeze(0)
+        #     ee_10D_b = self.curr_robot_ee_b.clone() # shape (num_envs, 10)
+        #     self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
         else: 
             goal_in_ee_fr = self.curr_comm_in_curr_ee_fr + self.cfg.alpha * self.ee_residual
-            print("base action: ", self.curr_comm_in_curr_ee_fr)
-            # goal_in_ee_fr = self.teleop_comm_in_ee_fr[self.time_step_per_env] + self.cfg.alpha * self.ee_residual
             ee_10D_b = self.curr_robot_ee_b.clone()
             self.ee_goal_b = combine_frame_transforms_10D(ee_10D_b, goal_in_ee_fr)
-            print("ee goal clean b: ", self.ee_goal_b)
+
+            if self.cfg.print_all_intermediate_value:
+                print(">>>>>>>>>>>>>>> POLICY OUTPUT <<<<<<<<<<<<<<<<")
+                print("base action (comm in ee fr): ")
+                format_tensor(self.curr_comm_in_curr_ee_fr)
+                print("residual: ")
+                format_tensor(self.ee_residual)
+                print("ee goal clean b: ")
+                format_tensor(self.ee_goal_b)
 
         ee_goal_filtered = self.cfg.tilde * self.ee_goal_b.clone() + (1-self.cfg.tilde) * self.last_ee.clone()
 
@@ -401,7 +401,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         ee_goal_filtered[:,:3] = torch.clamp(ee_goal_filtered[:,:3], self.robot_position_lower_limits, self.robot_position_upper_limits)
         ee_goal_filtered[:,-1] = (ee_goal_filtered[:,-1] > 0.5).float()
-        print("ee goal filtered: ", ee_goal_filtered)
+
+        if self.cfg.print_all_intermediate_value:
+            print("ee goal filtered: ", ee_goal_filtered)
 
         self.ee_hist.append(ee_goal_filtered.clone())
 
@@ -416,10 +418,17 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         self.joint_pos = self.get_joint_pos_from_ee_pos_10d(self.diff_ik_controller, ee_goal_filtered)                           # ee_goal always abs coordinates
         self.robot_dof_targets[:] = torch.clamp(self.joint_pos, self.robot_dof_lower_limits[:8], self.robot_dof_upper_limits[:8])   # (num_envs, 8)
-        print("qpos goal: ", self.robot_dof_targets)
         self.time_step_per_env += 1
+        if self.cfg.print_all_intermediate_value:
+            print("robot joint pose target")
+            format_tensor(self.robot_dof_targets)
 
-        self.action_list.append(ee_goal_filtered.clone())
+        if self.cfg.store_traj_data:
+            self.sim_ee_goal_with_res.append(ee_goal_filtered.clone())
+            if len(self.sim_ee_goal_with_res) == 400:
+                save_to_txt(self.sim_ee_goal_with_res, "RRL/sim2real/sim_traj2_data/ee_with_residual/sim_ee_goal_with_res.txt")
+                print("ee goal with residual saved")
+
         # if self.time_step_per_env == 399:
         #     actions = np.concatenate([t.detach().cpu().numpy() for t in self.action_list], axis=0)  # shape: (100, 7)
 
@@ -485,11 +494,7 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         terminated = self._robot.data.body_com_state_w[:, 9, 2] < 0.165 #NOTE: 9th body is link_eef
         # print("actual ee height: ", self._robot.data.body_com_state_w[:, 9, 2])
 
-        # terminated |= self.finger_joint_dif > 0.5 #TODO: can't be a termination condition 
-
         truncated = self.episode_length_buf >= self.max_episode_length - 1
-
-        # truncated = self.time_step_per_env >= self.traj_length - 1
 
         return terminated, truncated
 
@@ -551,11 +556,11 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
         self._robot.reset(env_ids=env_ids)
 
-        # update initial pose of demo trajs
-        if self.cfg.apply_dmr:
+        # # update initial pose of demo trajs
+        if self.cfg.apply_dmr: # TODO: check this!!!! Learn indexing
             # ee after dmr
             initial_ee = self.get_robot_state_b().clone()
-            # interpolated from randomized ee to demo traj
+            # interpolated from randomized ee to demo traj            
             initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.demo_traj[env_ids, self.demo_idx[env_ids], 20, :], 20) # (env_ids, 1, 50, 10)
             # fill in initial traj
             self.demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
@@ -603,11 +608,14 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         #     save_to_txt(self.sim_teleop_ee_fr, "RRL/sim2real/sim_traj1/teleop_comm_ee_fr.txt")
         #     print("teleop comm ee fr saved")
         #     exit()
-        # self.sim_teleop_base_fr.append(curr_teleop_comm_b.clone())
-        # if len(self.sim_teleop_base_fr) == 400:
-        #     save_to_txt(self.sim_teleop_base_fr, "RRL/sim2real/sim_traj1/teleop_comm_base_fr.txt")
-        #     print("teleop comm base fr saved")
-        #     exit()
+        if self.cfg.store_traj_data:
+            self.sim_teleop_base_fr.append(curr_teleop_comm_b.clone())
+            self.sim_robot_ee_b.append(self.curr_robot_ee_b.clone())
+            if len(self.sim_teleop_base_fr) == 401: # includes initial get_obs() call
+                save_to_txt(self.sim_teleop_base_fr[1:], "RRL/sim2real/sim_traj2_data/base_traj/teleop_comm_b.txt")
+                print("teleop comm base fr saved")
+                save_to_txt(self.sim_robot_ee_b[1:], "RRL/sim2real/sim_traj2_data/robot_obs/sim_robot_ee_b.txt")
+                print("robot ee b saved")
 
         # print("curr comm in curr ee fr: ", self.curr_comm_in_curr_ee_fr)
 
@@ -619,12 +627,15 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         cube_10D_b = ee_7D_to_10D(cube_7D_b)
         cube_pose_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, cube_10D_b)[:,:9]
         
-        # print obs in base fr
-        print("curr robot ee b: ", self.curr_robot_ee_b)
-        print("curr teleop comm b: ", curr_teleop_comm_b)
-        print("cube pose b: ", cube_10D_b)
-
-        # import pdb; pdb.set_trace()
+        if self.cfg.print_all_intermediate_value:
+            print(">>>>>>>>>>>>>>> POLICY INPUTS <<<<<<<<<<<<<<<<")
+            print("-------------- 1. 10D observations in base frame --------------")
+            print("curr robot ee b: ")
+            format_tensor(self.curr_robot_ee_b)
+            print("curr teleop comm b: ")
+            format_tensor(curr_teleop_comm_b)
+            print("cube pose b: ")
+            format_tensor(cube_10D_b)
 
         # visualize obs in base fr
         if self.cfg.mark_obs:
@@ -677,21 +688,20 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
         if self.collect_min_max_obs_values:
             self.collected.append(actor_obs.clone())
 
-        # print normalized obs
-        # print("normalized robot state obs")
-        # format_tensor(normalized_robot_state_obs)
-        # print("normalized teleop comm obs")
-        # format_tensor(normalized_teleop_comm_obs)
-        # print("normalized cube pose obs")
-        # format_tensor(normalized_cube_pose_obs)
+        if self.cfg.print_all_intermediate_value:
+            print("------------ 2. 10D normalized rel obs (actual input) ------------")
+            print("normalized robot state obs")
+            format_tensor(normalized_robot_state_obs)
+            print("normalized teleop comm obs")
+            format_tensor(normalized_teleop_comm_obs)
+            print("normalized cube pose obs")
+            format_tensor(normalized_cube_pose_obs)
 
         return {"policy": torch.clamp(actor_obs, -5.0, 5.0)}
 
     def _compute_rewards(self):
         # height of the cube
-        height_reward = torch.where(self._cube.data.root_pos_w[:, 2] > self.cfg.minimal_height, 1.0, 0.0) #* (1+self._cube.data.root_pos_w[:, 2].clamp(0,0.3))
-        # print(self._cube.data.root_pos_w[:, 2])
-        # height_reward = self._cube.data.root_pos_w[:, 2].clamp(0.0,0.3) + (self._cube.data.root_pos_w[:, 2] > self.cfg.minimal_height)
+        height_reward = torch.where(self._cube.data.root_pos_w[:, 2] > self.cfg.minimal_height, 1.0, 0.0)
         cube_y = self._cube.data.root_pos_w[:, 1] - self.scene.env_origins[:, 1]
         cube_x = self._cube.data.root_pos_w[:, 0] - self.scene.env_origins[:, 0]
         height_reward *= (cube_y < 0.3) * (cube_y > -0.3) * (cube_x < 0.6) * (cube_x > 0.1)
@@ -716,9 +726,6 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
             curr_root_pose_w[:, 0:3], curr_root_pose_w[:, 3:7], self._cube.data.body_com_state_w[:,0,:3], self._cube.data.body_com_state_w[:,0,3:7]
         )
         cube_pos_b = torch.cat([cube_position_b, cube_quaternion_b], dim=-1) # (num_envs, 7)
-
-        # self.demo_ee_marker.visualize(cube_pos_b[:,:3], cube_pos_b[:,3:7])
-        # self.ee_goal_marker.visualize(ee_gripper_b[:,:3], ee_gripper_b[:,3:7])
 
         # Distance of the end-effector to the object: (num_envs,)
         object_ee_distance = torch.norm(cube_pos_b - ee_gripper_b, dim=1)
@@ -836,9 +843,9 @@ class XArmCubeResidualStateLocalBinaryV3Env(DirectRLEnv):
 
         joint_pos_des_arm = controller.compute(curr_ee_b[:,:3], curr_ee_quat_b, jacobian, joint_pos)
 
-        gripper_status = ee_goal[:, -1].unsqueeze(1).clone()
-        gripper_status[gripper_status > 0.5] = 0.5          # NOTE: close gripper
-        gripper_status[gripper_status < 0.5] = 0.0          # NOTE: open gripper
+        gripper_status = ee_goal[:, -1].unsqueeze(1).clone() # binary gripper + residual output
+        gripper_status[gripper_status > 0.5] = 0.5          # NOTE: close gripper in qpos
+        gripper_status[gripper_status < 0.5] = 0.0          # NOTE: open gripper in qpos
 
         joint_pos_des = torch.cat((joint_pos_des_arm, gripper_status), dim=-1)
 

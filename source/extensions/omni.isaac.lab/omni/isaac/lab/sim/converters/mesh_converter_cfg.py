@@ -51,3 +51,7 @@ class MeshConverterCfg(AssetConverterBaseCfg):
 
     scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
     """The scale of the mesh. Defaults to (1.0, 1.0, 1.0)."""
+
+    max_convex_hulls: int = 32
+
+    

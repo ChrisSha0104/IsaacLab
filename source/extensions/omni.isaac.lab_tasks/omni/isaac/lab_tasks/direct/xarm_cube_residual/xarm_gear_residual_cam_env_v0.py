@@ -17,7 +17,7 @@ from omni.isaac.lab.actuators.actuator_cfg import ImplicitActuatorCfg
 from omni.isaac.lab.assets import Articulation, ArticulationCfg
 from omni.isaac.lab.envs import DirectRLEnv, DirectRLEnvCfg
 from omni.isaac.lab.scene import InteractiveSceneCfg
-from omni.isaac.lab.sim import SimulationCfg
+from omni.isaac.lab.sim import SimulationCfg, PhysxCfg
 from omni.isaac.lab.terrains import TerrainImporterCfg
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -88,7 +88,7 @@ class MediumGear(HeldAssetCfg):
     usd_path = f"{ASSET_DIR}/factory_gear_medium.usd"
     diameter = 0.03  # Used for gripper width.
     height: float = 0.03
-    mass = 0.012
+    mass = 1.0
 
 @configclass
 class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
@@ -97,7 +97,7 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     decimation = 4
     action_space: int = 10                          # [position, 6D orientation, gripper qpos]
     observation_space = 10 + 10 + 120*120           # [robot state, teleop action, depth image]
-    state_space = 10 + 10 + 9 + 120*120         # [robot state, teleop action, depth image, object state, demo idx]
+    state_space = 10 + 10 + 9 + 120*120             # [robot state, teleop action, depth image, object state, demo idx]
     rerender_on_reset = False
     # simulation
     sim: SimulationCfg = SimulationCfg(
@@ -110,6 +110,17 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
             static_friction=1.0,
             dynamic_friction=1.0,
             restitution=0.0,
+        ),
+        physx=PhysxCfg(
+            solver_type=1,
+            max_position_iteration_count=40,  # Important to avoid interpenetration.
+            max_velocity_iteration_count=1,
+            bounce_threshold_velocity=0.2,
+            friction_offset_threshold=0.01,
+            friction_correlation_distance=0.00625,
+            gpu_max_rigid_contact_count=2**23,
+            gpu_max_rigid_patch_count=2**23,
+            gpu_max_num_partitions=1,  # Important for stable simulation.
         ),
     )
 
@@ -125,12 +136,21 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
                 max_depenetration_velocity=5.0,
+                linear_damping=0.0,
+                angular_damping=0.0,
+                max_linear_velocity=1000.0,
+                max_angular_velocity=3666.0,
+                enable_gyroscopic_forces=True,
+                solver_position_iteration_count=40,
+                solver_velocity_iteration_count=1,
+                # max_contact_impulse=1e32,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True, 
-                solver_position_iteration_count=12, 
+                enabled_self_collisions=False, 
+                solver_position_iteration_count=192, 
                 solver_velocity_iteration_count=1
-            ),                  
+            ), 
+            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),                  
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
@@ -190,7 +210,7 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/SmallGearAsset",
         spawn=sim_utils.UsdFileCfg(
             usd_path=small_gear_usd,
-            activate_contact_sensors=True,
+            activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
@@ -207,16 +227,18 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.4, 0.1), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
+            pos=(0.3, 0.05, 0.0), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
         ),
         actuators={},
     )
+
+    robot_friction = 0.75
 
     large_gear_cfg: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/LargeGearAsset",
         spawn=sim_utils.UsdFileCfg(
             usd_path=large_gear_usd,
-            activate_contact_sensors=True,
+            activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
@@ -225,7 +247,7 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
                 max_linear_velocity=1000.0,
                 max_angular_velocity=3666.0,
                 enable_gyroscopic_forces=True,
-                solver_position_iteration_count=192,
+                solver_position_iteration_count=40,
                 solver_velocity_iteration_count=1,
                 max_contact_impulse=1e32,
             ),
@@ -233,7 +255,7 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.4, 0.1), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
+            pos=(0.3, 0.15, 0.0), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
         ),
         actuators={},
     )
@@ -246,7 +268,7 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/FixedAsset",
         spawn=sim_utils.UsdFileCfg(
             usd_path=fixed_asset_cfg.usd_path,
-            activate_contact_sensors=True,
+            activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
@@ -255,7 +277,7 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
                 max_linear_velocity=1000.0,
                 max_angular_velocity=3666.0,
                 enable_gyroscopic_forces=True,
-                solver_position_iteration_count=192,
+                solver_position_iteration_count=40,
                 solver_velocity_iteration_count=1,
                 max_contact_impulse=1e32,
             ),
@@ -263,7 +285,7 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.6, 0.0, 0.05), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
+            pos=(0.3, 0.05, 0.0), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
         ),
         actuators={},
     )
@@ -272,16 +294,16 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/HeldAsset",
         spawn=sim_utils.UsdFileCfg(
             usd_path=held_asset_cfg.usd_path,
-            activate_contact_sensors=True,
+            activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=True,
+                disable_gravity=False,
                 max_depenetration_velocity=5.0,
                 linear_damping=0.0,
                 angular_damping=0.0,
                 max_linear_velocity=1000.0,
                 max_angular_velocity=3666.0,
                 enable_gyroscopic_forces=True,
-                solver_position_iteration_count=192,
+                solver_position_iteration_count=40,
                 solver_velocity_iteration_count=1,
                 max_contact_impulse=1e32,
             ),
@@ -289,8 +311,8 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.4, 0.1), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
-        ),
+            pos=(0.325,-0.14, 0.0), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
+        ), # x -= -3.025e-2
         actuators={},
     )
     
@@ -349,11 +371,11 @@ class XArmGearResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     visual_idx_critic = [20,20+120*120]
 
     # training options:
-    add_noise_to_demo = True
+    add_noise_to_demo = False
     learn_std = True
     use_privilege_obs = True
-    apply_dmr = True
-    num_demos = 2 # TODO change to 3
+    apply_dmr = False
+    num_demos = 3
     state_history_length = 50 # 1.5s ago
 
     # parameters
@@ -423,7 +445,7 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
             world_quat = world_transform.ExtractRotationQuat()
 
             px = world_pos[0] - env_pos[0]
-            py = world_pos[1] - env_pos[1]
+            py = world_pos[1] - env_pos[1] 
             pz = world_pos[2] - env_pos[2]
             qx = world_quat.imaginary[0]
             qy = world_quat.imaginary[1]
@@ -471,20 +493,8 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.teleop_comm_obs = self.init_pos.clone() # most recent rel teleop ee command for each env (num_envs, 10)
         self.last_ee = self.init_pos.clone()
         self.ee_goal_b = self.init_pos.clone()
- 
-        real_t_sim = matrix_from_quat(torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device))
-        all_demos = []
-        for i in range(1,self.cfg.num_demos+1):
-            # traj = self.postprocess_real_demo_trajectory(f"/home/shuosha/Desktop/rl_cube_demos_real/rel_traj_mode{i}/robot")
-            traj = postprocess_real_demo_trajectory_6D(real_t_sim, f"/home/shuosha/projects/IsaacLab/RRL/demo_trajs/rel_traj_v2_m{i}/robot") # (1, traj_length, action_dim)
-            traj = traj.repeat(self.num_envs, 1, 1) # (num_envs, traj_length, action_dim)
-            initial_traj = interpolate_10d_ee_trajectory(self.init_pos, traj[:,0,:], 50)
-            traj = torch.cat((initial_traj, traj), dim=1)
-            traj = resample_trajectory_10d(traj, self.traj_length, self.cfg.action_space)
-            traj[..., -1] = (traj[..., -1] > 0.2).float() # convert gripper qpos to binary
-            all_demos.append(traj)
-            
-        self.demo_traj = torch.stack(all_demos, dim=1) # (num_envs, num_demos, traj_length, action_space)
+
+        self.demo_traj = self._generate_clean_demo_traj(dir="RRL/tasks/gear_mesh/training_data1", num_demos=self.cfg.num_demos, init_pos=self.init_pos)
             
         diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
         self.diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=self.num_envs, device=self.device)
@@ -492,6 +502,37 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.collected = []
         self.collect_min_max_obs_values = False
         self.sim_teleop_base_fr = []
+
+        self._set_default_dynamics_parameters()
+
+    def _set_default_dynamics_parameters(self):
+        """Set parameters defining dynamic interactions."""
+        # Set masses and frictions.
+        self._set_friction(self._held_asset, self.cfg.held_asset_cfg.friction)
+        self._set_friction(self._fixed_asset, self.cfg.fixed_asset_cfg.friction)
+        self._set_friction(self._robot, self.cfg.robot_friction)
+
+    def _set_friction(self, asset, value):
+        """Update material properties for a given asset."""
+        materials = asset.root_physx_view.get_material_properties()
+        materials[..., 0] = value  # Static friction.
+        materials[..., 1] = value  # Dynamic friction.
+        env_ids = torch.arange(self.scene.num_envs, device="cpu")
+        asset.root_physx_view.set_material_properties(materials, env_ids)
+
+    def _generate_clean_demo_traj(self, dir: str, num_demos: int, init_pos: torch.Tensor):
+        all_demos = []
+
+        for i in range(1, num_demos+1):
+            traj: torch.Tensor = load_from_txt(os.path.join(dir, f"demo_traj{i}.txt"), return_type="torch").unsqueeze(0).to(self.device) # (num_lens, action_dim) # type: ignore
+            traj = traj.repeat(self.num_envs, 1, 1) # (num_envs, traj_length, action_dim)
+            initial_traj = interpolate_10d_ee_trajectory(init_pos, traj[:,0,:], 50)
+            traj = torch.cat((initial_traj, traj), dim=1)
+            traj = resample_trajectory_10d(traj, self.traj_length, self.cfg.action_space) # (num_envs, traj_length, action_dim)
+            traj[..., -1] = (traj[..., -1] > 0.2).float() # convert gripper qpos to binary
+            all_demos.append(traj)
+
+        return torch.stack(all_demos, dim=1) # (num_envs, num_demos, traj_length, action_dim)
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -557,13 +598,6 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
                 format_tensor(self.ee_goal_b)
 
         ee_goal_filtered = self.cfg.tilde * self.ee_goal_b.clone() + (1-self.cfg.tilde) * self.last_ee.clone()
-
-        # if self.cfg.apply_dmr:
-        #     pos_noise = torch.rand((self.num_envs, 3), device=self.device) * self.cfg.pos_std
-        #     rot_noise = torch.rand((self.num_envs, 6), device=self.device) * self.cfg.rot_std
-        #     ee_goal_filtered[:,:3] += pos_noise
-        #     ee_goal_filtered[:,3:9] += rot_noise
-
         ee_goal_filtered[:,:3] = torch.clamp(ee_goal_filtered[:,:3], self.robot_position_lower_limits, self.robot_position_upper_limits)
         ee_goal_filtered[:,-1] = (ee_goal_filtered[:,-1] > 0.5).float()
 
@@ -663,31 +697,39 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
     def _get_rewards(self) -> torch.Tensor:
         return self._compute_rewards()
 
-    def _reset_idx(self, env_ids):
-        super()._reset_idx(env_ids)
+    def _collect_obs_data_on_termination(self, env_ids):
+        """collect obs data and compute min/max for manual normalization"""
+        data = torch.cat(self.collected, dim=0)  # shape: (N,26)
 
-        # DEBUG: collect obs data and compute min/max            
-        if self.collect_min_max_obs_values and len(self.collected) > 0:
-            data = torch.cat(self.collected, dim=0)  # shape: (N,26)
+        # Compute column-wise minimum and maximum.
+        min_vals = torch.min(data, dim=0).values  # shape: (26,)
+        max_vals = torch.max(data, dim=0).values  # shape: (26,)
 
-            # Compute column-wise minimum and maximum.
-            min_vals = torch.min(data, dim=0).values  # shape: (26,)
-            max_vals = torch.max(data, dim=0).values  # shape: (26,)
+        print("Minimum values for each dimension:", min_vals)
+        print("Maximum values for each dimension:", max_vals)
 
-            print("Minimum values for each dimension:", min_vals)
-            print("Maximum values for each dimension:", max_vals)
-
+    def _reset_buffers(self, env_ids):
         # Reset time step
         self.time_step_per_env[env_ids] = 0
 
         # Reset demo idx
         self.demo_idx[env_ids] = (self.demo_idx[env_ids] + 1) % self.cfg.num_demos 
 
+        self._reset_demo_traj(env_ids, self.cfg.apply_dmr, self.cfg.add_noise_to_demo)
+
+        # clear obs buffers
+        self.robot_state_hist.clear_envs(env_ids)
+        self.teleop_comm_hist.clear_envs(env_ids)
+        self.teleop_comm_obs[env_ids,:] = self.training_demo_traj[env_ids, self.demo_idx[env_ids], 0, :]
+
+    def _reset_robot_state(self, env_ids, apply_dmr=False):
         # Reset qpos
         joint_pos = self._robot.data.default_joint_pos[env_ids].clone()
+        joint_vel = torch.zeros_like(joint_pos)
+        joint_effort = torch.zeros_like(joint_pos)
 
         # DMR for initial qpos
-        if self.cfg.apply_dmr:
+        if apply_dmr:
             # print("Applying DMR")
             joint_pos[:,:7] += sample_uniform( 
                                 -0.125,
@@ -709,17 +751,19 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
                                     (len(env_ids), 7),
                                     self.device,
                                 )
-
             self._robot.write_joint_stiffness_to_sim(randomized_stiffness, [0,1,2,3,4,5,6], env_ids=env_ids)
-            self._robot.write_joint_damping_to_sim(randomized_damping, [0,1,2,3,4,5,6], env_ids=env_ids)                
+            self._robot.write_joint_damping_to_sim(randomized_damping, [0,1,2,3,4,5,6], env_ids=env_ids)
         
-        joint_vel = torch.zeros_like(joint_pos)
-        # self._robot.set_joint_position_target(joint_pos, env_ids=env_ids)
+        self._robot.set_joint_position_target(joint_pos, env_ids=env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
         self._robot.reset(env_ids=env_ids)
+        self._robot.set_joint_effort_target(joint_effort, env_ids=env_ids)
 
+        self._step_sim_no_action()
+
+    def _reset_demo_traj(self, env_ids, apply_dmr=False, add_noise=True):
         # # update initial pose of demo trajs
-        if self.cfg.apply_dmr: # TODO: check this!!!! Learn indexing
+        if apply_dmr: # TODO: check this!!!! Learn indexing
             # ee after dmr
             initial_ee = self.get_robot_state_b().clone()
             # interpolated from randomized ee to demo traj            
@@ -728,7 +772,7 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
             self.demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
         
         # add noise to demo traj
-        if not self.cfg.add_noise_to_demo:
+        if not add_noise:
             self.training_demo_traj = self.demo_traj
         else:
             step_interval = int(torch.randint(20, 41, (1,)).item())
@@ -736,25 +780,29 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
             beta_filter = torch.rand(1).item() * (0.7 - 0.5) + 0.5
             self.training_demo_traj = smooth_noisy_trajectory(self.demo_traj, env_ids, step_interval=step_interval, noise_level=noise_level, beta_filter=beta_filter)
 
-        # reset asset states
-        self._set_assets_to_default_pose(env_ids)
-
-        # camera
-        self._camera.reset(env_ids)
-
-        # controller
-        self.diff_ik_controller.reset(env_ids) # type: ignore
-
-        # go through physics
+    def _step_sim_no_action(self):
+        """Step the simulation without an action. Used for resets."""
+        self.scene.write_data_to_sim()
+        self.sim.step(render=False)
         self.scene.update(dt=self.physics_dt)
 
-        # clear obs buffers
-        self.robot_state_hist.clear_envs(env_ids)
-        self.teleop_comm_hist.clear_envs(env_ids)
-        self.teleop_comm_obs[env_ids,:] = self.training_demo_traj[env_ids, self.demo_idx[env_ids], 0, :]
+    def _reset_idx(self, env_ids):
+        super()._reset_idx(env_ids)
 
-    def _set_assets_to_default_pose(self, env_ids):
-        """Move assets to default pose before randomization."""
+        # DEBUG: collect obs data and compute min/max            
+        if self.collect_min_max_obs_values and len(self.collected) > 0: 
+            self._collect_obs_data_on_termination(env_ids)
+        
+        self._reset_buffers(env_ids)
+        self._reset_robot_state(env_ids, self.cfg.apply_dmr)
+        self._reset_assets(env_ids, self.cfg.apply_dmr)
+        
+        self._camera.reset(env_ids)
+        self.diff_ik_controller.reset(env_ids) # type: ignore
+
+        self._step_sim_no_action()
+
+    def _reset_assets(self, env_ids, apply_dmr=False):
         held_state = self._held_asset.data.default_root_state.clone()[env_ids]
         held_state[:, 0:3] += self.scene.env_origins[env_ids]
         held_state[:, 7:] = 0.0
@@ -812,7 +860,7 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
         if self.cfg.mark_obs:
             self.marker1.visualize(prev_robot_ee_b[:,:3], ee_10D_to_8D(prev_robot_ee_b)[:,3:7])
             self.marker2.visualize(self.ee_goal_b[:,:3], ee_10D_to_8D(self.ee_goal_b)[:,3:7])
-            # self.marker3.visualize(cube_7D_b[:,:3], cube_7D_b[:,3:7])
+            self.marker3.visualize(torch.tensor([[0.5, 0.0, 0.05]], device=self.device))
 
         robot_state_min = torch.tensor([-0.1, -0.1, -0.1,  # position
                                         -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, # orientation 
@@ -852,10 +900,10 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
         depth_filtered = filter_sim_depth(depth_clean) # (num_envs, 120*120) which should give same reading as real
         normalized_depth = normalize_depth_01(depth_filtered)
 
-        # if True: 
-        #     depth_vis = filter_depth_for_visualization(depth_filtered.reshape(120,120).detach().cpu().numpy(), unit='m') # only works for 1 env
-        #     cv2.imshow("depth_image", depth_vis)
-        #     cv2.waitKey(1)
+        if True: 
+            depth_vis = filter_depth_for_visualization(depth_filtered.reshape(120,120).detach().cpu().numpy(), unit='m') # only works for 1 env
+            cv2.imshow("depth_image", depth_vis)
+            cv2.waitKey(1)
         #     save_tensor_as_txt(depth_filtered, "RRL/sim2real/vision_gap/raw/visual_raw_obs_sim")
         #     import pdb; pdb.set_trace()
 
@@ -1045,7 +1093,7 @@ class XArmGearResidualCamLocalBinaryV0Env(DirectRLEnv):
         joint_pos_des_arm = controller.compute(curr_ee_b[:,:3], curr_ee_quat_b, jacobian, joint_pos)
 
         gripper_status = ee_goal[:, -1].unsqueeze(1).clone() # binary gripper + residual output
-        gripper_status[gripper_status > 0.5] = 0.5          # NOTE: close gripper in qpos
+        gripper_status[gripper_status > 0.5] = 0.7          # NOTE: close gripper in qpos
         gripper_status[gripper_status < 0.5] = 0.0          # NOTE: open gripper in qpos
 
         joint_pos_des = torch.cat((joint_pos_des_arm, gripper_status), dim=-1)

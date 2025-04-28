@@ -827,6 +827,22 @@ def visualize_and_validate_slerp_batch():
     ax.legend()
     plt.show()
 
+# def get_env_local_pose(env_pos: torch.Tensor, xformable: UsdGeom.Xformable, device: torch.device):
+#     """Compute pose in env-local coordinates"""
+#     world_transform = xformable.ComputeLocalToWorldTransform(0)
+#     world_pos = world_transform.ExtractTranslation()
+#     world_quat = world_transform.ExtractRotationQuat()
+
+#     px = world_pos[0] - env_pos[0]
+#     py = world_pos[1] - env_pos[1] 
+#     pz = world_pos[2] - env_pos[2]
+#     qx = world_quat.imaginary[0]
+#     qy = world_quat.imaginary[1]
+#     qz = world_quat.imaginary[2]
+#     qw = world_quat.real
+
+#     return torch.tensor([px, py, pz, qw, qx, qy, qz], device=device)
+
 if __name__ == "__main__":
     visualize_and_validate_slerp_batch()
     # visualize_orientation_consistency()

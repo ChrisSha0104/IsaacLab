@@ -225,7 +225,7 @@ def visualize_points_on_image(points_2d: torch.Tensor, image: np.ndarray, color=
         cv2.circle(image, (point[0], point[1]), radius, color, -1) # type: ignore
     return image
 
-def filter_depth_for_visualization(depth: np.ndarray, max_depth: float = 1.0, min_depth: float = 0.1, unit: str = "mm") -> np.ndarray:
+def filter_depth_for_visualization(depth: np.ndarray, max_depth: float = 0.5, min_depth: float = 0.1, unit: str = "mm") -> np.ndarray:
     """
     filter depth to be visualized using cv2.
     """

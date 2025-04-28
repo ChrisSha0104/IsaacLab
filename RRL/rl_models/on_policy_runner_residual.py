@@ -41,8 +41,12 @@ class OnPolicyRunnerResidual:
 
         if actor_critic_class.__name__ == "ResidualActorCriticVisual":
             actor_critic: ResidualActorCriticVisual = actor_critic_class( # type: ignore
-                num_obs, num_critic_obs, self.env.num_actions, use_visual_encoder=self.env.cfg.use_visual_encoder, **self.policy_cfg # type: ignore
-                ).to(self.device) # type: ignore
+                num_obs, num_critic_obs, self.env.num_actions, 
+                use_visual_encoder=self.env.cfg.use_visual_encoder, # type: ignore
+                visual_idx_actor=self.env.cfg.visual_idx_actor, # type: ignore
+                visual_idx_critic=self.env.cfg.visual_idx_critic, # type: ignore
+                **self.policy_cfg,
+                ).to(self.device)
         else:
             actor_critic: ActorCritic | ActorCriticRecurrent | ActorCriticVisual = actor_critic_class(
                 num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
