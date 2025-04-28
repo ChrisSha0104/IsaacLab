@@ -163,12 +163,11 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
             ),
         },
     )
-    robot_friction = 0.75
 
     battery_R = RigidObjectCfg(
             prim_path="/World/envs/env_.*/Battery_R",
             init_state=RigidObjectCfg.InitialStateCfg(
-                pos=(0.495, -0.0542, 0.0), # demo 1 (0.495, -0.0542, 0.0)
+                pos=(0.45, -0.08, 0.0), # demo 1 (0.495, -0.0542, 0.0)
                 rot=(0.707, 0.707, 0, 0),
             ),
             spawn=sim_utils.UsdFileCfg(
@@ -269,7 +268,7 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     training_data_path = "RRL/tasks/battery/training_set1"
 
     # visualization options: (All turned to false during training)
-    play_training_demo = True
+    play_training_demo = False
     play_real_demo = False
     mark_obs = False
 
@@ -288,31 +287,30 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     visual_idx_critic = [20,20+120*120]
 
     # training options:
-    add_noise_to_demo = False
+    add_noise_to_demo = True
     learn_std = True
     use_privilege_obs = True
-    apply_dmr = False
+    apply_dmr = True
     num_demos = 10
     state_history_length = 50 # 1.5s ago
 
     # parameters
     pos_std = 5e-3 # dmr scales
     rot_std = 1e-3
-    alpha = 0.1 # residual scale
-    tilde = 0.5 # low pass filter
-    minimal_height = 0.05
+    alpha = 1.0 # residual scale
+    tilde = 0.7 # low pass filter
     fingertip_dist_std = 0.1
 
     # reward scale RESIDUAL
     # --- task-completion ---
     completion_reward_scale = 1.0
-    fingertip_dist_reward_scale = 0.3
-    battery_goal_dist_reward_scale = 0.3
+    fingertip_dist_reward_scale = 0.3 # 0.25
+    battery_goal_dist_reward_scale = 0.3 # 0.1
 
     # --- auxiliary ---
-    residual_penalty_scale = -0.1
-    residual_rate_scale = -0.1
-    velocity_penalty_scale = -0.05
+    residual_penalty_scale = -0.025
+    residual_rate_scale = -0.025
+    velocity_penalty_scale = -0.01
     collision_penalty_scale = -10.0
     gripper_height_penalty_scale = -10.0
 
