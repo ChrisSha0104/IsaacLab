@@ -682,7 +682,7 @@ class XArmCubeResidualCamLocalBinaryV5Env(DirectRLEnv):
             cube_8D_w[:, 0:3], cube_8D_w[:, 3:7], self._cube.data.body_com_state_w[:,0,:3], self._cube.data.body_com_state_w[:,0,3:7]
         )
         cube_7D_b = torch.cat([cube_pos_b, cube_quat_b], dim=-1)
-        cube_10D_b = ee_7D_to_10D(cube_7D_b)
+        cube_10D_b = ee_7D_to_9D(cube_7D_b)
         cube_pose_in_curr_ee_fr = subtract_frame_transforms_10D(self.curr_robot_ee_b, cube_10D_b)[:,:9]
         
         if self.cfg.print_all_intermediate_value:
@@ -694,8 +694,6 @@ class XArmCubeResidualCamLocalBinaryV5Env(DirectRLEnv):
             format_tensor(curr_teleop_comm_b)
             print("cube pose b: ")
             format_tensor(cube_10D_b)
-
-        import pdb; pdb.set_trace()
 
         # visualize obs in base fr
         if self.cfg.mark_obs:
@@ -739,14 +737,18 @@ class XArmCubeResidualCamLocalBinaryV5Env(DirectRLEnv):
 
         depth_clean = self._camera.data.output["distance_to_image_plane"].permute(0,3,1,2)
         depth_filtered = filter_sim_depth(depth_clean) # (num_envs, 120*120) which should give same reading as real
+
+        # plt.imshow(depth_filtered.detach().cpu().numpy().reshape(120,120))
+        # plt.title("Depth Map Sim")
+        # plt.show()
         normalized_depth = normalize_depth_01(depth_filtered)
 
         if True: 
             depth_vis = filter_depth_for_visualization(depth_filtered.reshape(120,120).detach().cpu().numpy(), unit='m') # only works for 1 env
             cv2.imshow("depth_image", depth_vis)
             cv2.waitKey(1)
-            # save_tensor_as_txt(depth_filtered, "RRL/sim2real/vision_gap/raw/visual_raw_obs_sim")
-            # import pdb; pdb.set_trace()
+            save_tensor_as_txt(depth_filtered, "RRL/sim2real/vision_gap/raw/visual_raw_obs_sim")
+            import pdb; pdb.set_trace()
 
         # save_tensor_as_txt(normalized_depth, "RRL/sim2real/vision_gap/input/visual_input_obs_sim")
         # import pdb; pdb.set_trace()
@@ -807,8 +809,7 @@ class XArmCubeResidualCamLocalBinaryV5Env(DirectRLEnv):
                 curr_root_pose_w[:, 0:3], curr_root_pose_w[:, 3:7], curr_ee_pose_w[:, 0:3], curr_ee_pose_w[:, 3:7]
             )
         
-        ee_b = torch.cat([curr_ee_pos_b, curr_ee_quat_b], dim=-1)
-        offset_gripper_position = subtract_z_in_baseframe_batch(ee_b, z_offset=0.14)
+        offset_gripper_position = offset_b_in_target_fr(curr_ee_pos_b, curr_ee_quat_b, [0.0, 0.0, 0.14])
         ee_gripper_b = torch.cat([offset_gripper_position, curr_ee_quat_b], dim=-1)
 
         cube_position_b, cube_quaternion_b = subtract_frame_transforms(

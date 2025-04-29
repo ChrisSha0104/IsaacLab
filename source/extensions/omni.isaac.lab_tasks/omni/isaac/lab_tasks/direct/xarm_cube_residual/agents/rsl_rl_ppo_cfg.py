@@ -11,7 +11,6 @@ from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import (
     RslRlPpoAlgorithmCfg,
     RslRlResidualPpoActorCriticCfg,
 )
-
 @configclass
 class XArmResidualCubePPORunnerCamCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 16

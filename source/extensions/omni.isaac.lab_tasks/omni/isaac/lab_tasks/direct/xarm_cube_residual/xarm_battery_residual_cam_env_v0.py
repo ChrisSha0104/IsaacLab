@@ -54,7 +54,7 @@ TODO:
 @configclass
 class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     # env 
-    episode_length_s = 13.33333 # eps_len_s = traj_len * (dt * decimation)
+    episode_length_s = 20 # eps_len_s = traj_len * (dt * decimation)
     decimation = 4
     action_space: int = 10                          # [position, 6D orientation, gripper qpos]
     observation_space = 10 + 10 + 120*120           # [robot state, teleop action, depth image]
@@ -255,10 +255,10 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
 
     # training path
     training_data_path = "RRL/tasks/battery/training_set1"
-    enable_vision = False
+    enable_vision = True
 
     # visualization options: (All turned to false during training)
-    play_training_demo = False
+    play_training_demo = True
 
     # play option:
     show_camera = False                  # option only used for play
@@ -273,21 +273,23 @@ class XArmBatteryResidualCamLocalBinaryV0EnvCfg(DirectRLEnvCfg):
     visual_idx_critic = [20,20+120*120]
 
     # training options:
-    add_noise_to_demo = True
+    add_noise_to_demo = False
     learn_std = True
     use_privilege_obs = True
-    apply_dmr = True
+    apply_dmr = False
     num_demos = 10
 
     # parameters
-    alpha = 0.1 # residual scale
+    alpha = 1.0 # residual scale
     tilde = 0.7 # low pass filter
     fingertip_dist_std = 0.1
+    fingertip_rot_dist_std = 0.1
 
     # reward scale RESIDUAL
     # --- task-completion ---
     completion_reward_scale = 10.0
     fingertip_dist_reward_scale = 0.3 # 0.5
+    fingertip_rot_dist_reward_scale = 0.2 # 0.5
     battery_goal_dist_reward_scale = 0.5 # 0.5
 
     # --- auxiliary ---
@@ -337,7 +339,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.robot_dof_upper_limits = self._robot.data.soft_joint_pos_limits[0, :, 1].to(device=self.device)
 
         self.robot_position_upper_limits = torch.tensor([[0.65, 0.5, 0.5]], device=self.device)
-        self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.2]], device=self.device)
+        self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.18]], device=self.device)
 
         self.num_eff_joints = self._robot.num_joints - 5
         self.robot_dof_targets = torch.zeros((self.num_envs, self.num_eff_joints), device=self.device)
@@ -353,7 +355,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.env_idx = torch.arange(self.num_envs, device=self.device) # (num_envs, )
 
         # load demo traj
-        self.traj_length = 400
+        self.traj_length = 600
         self.demo_traj = torch.zeros((self.num_envs, self.cfg.num_demos, self.traj_length, self.cfg.action_space), device=self.device) # (num_envs, num_demos, traj_length, action_space)
         self.training_demo_traj = self.demo_traj.clone()
         self.init_pos = torch.tensor([[0.256, 0.00,  0.399, 1.00, 0.00, 0.00, 0.00, -1.00, 0.00, 0.00]], device=self.device).repeat(self.num_envs, 1) # (num_envs, 10)
@@ -370,6 +372,9 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.collect_min_max_obs_values = False
         self.sim_teleop_base_fr = []
 
+        self.teleop_10D_b_traj = []
+        self.depth_list = []
+
         self._set_default_dynamics_parameters()
 
         # tensors to reward for aligning with human intentions
@@ -383,8 +388,8 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         """get hardcoded placing goals for battery L and R"""
         self.target_pos_L = torch.tensor([[0.2429, 0.0678, 0.0056]], device=self.device).repeat(self.num_envs, 1) # target pos for battery L
         self.target_pos_R = torch.tensor([[0.2430, -0.0679, 0.0057]], device=self.device).repeat(self.num_envs, 1) # target pos for battery R
-        self.target_quat_L = torch.tensor([[0.6939, 0.7198, 0.0031, -0.0193]], device=self.device).repeat(self.num_envs, 1) # target quat for battery L
-        self.target_quat_R = torch.tensor([[0.6940, 0.7198, 0.0113, -0.0112]], device=self.device).repeat(self.num_envs, 1) # target quat for battery R
+        self.target_quat_L = torch.tensor([[0.0, 1.0, 0.0, 0.0]], device=self.device).repeat(self.num_envs, 1) # target quat for battery L
+        self.target_quat_R = torch.tensor([[0.0, 1.0, 0.0, 0.0]], device=self.device).repeat(self.num_envs, 1) # target quat for battery R
 
     def _set_box_region(self):
         self.box_lower_limits = torch.tensor([[0.12, -0.1, 0.0]], device=self.device).repeat(self.num_envs, 1)
@@ -439,13 +444,19 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
 
         # compute battery poses in base frame
         robot_root_w = self._robot.data.root_state_w[:]
+        q_transform = torch.tensor([[0.707, 0.707, 0.0, 0.0]], device=self.device).repeat(self.num_envs, 1) # (num_envs, 4)
+
         self.battery_L_pos, self.battery_L_quat = subtract_frame_transforms(
             robot_root_w[:, 0:3], robot_root_w[:, 3:7], self._battery_L.data.body_com_state_w[:,0,:3], self._battery_L.data.body_com_state_w[:,0,3:7]
         )
+
+        self.battery_L_quat = quat_mul(q_transform, self.battery_L_quat)
         self.battery_L_orn_6D = quat_to_6d(self.battery_L_quat)
+
         self.battery_R_pos, self.battery_R_quat = subtract_frame_transforms(
             robot_root_w[:, 0:3], robot_root_w[:, 3:7], self._battery_R.data.body_com_state_w[:,0,:3], self._battery_R.data.body_com_state_w[:,0,3:7]
         )
+        self.battery_R_quat = quat_mul(q_transform, self.battery_R_quat)
         self.battery_R_orn_6D = quat_to_6d(self.battery_R_quat)
 
         # compute intended battery's pose in base frame
@@ -471,11 +482,17 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         if self.cfg.debug_intermediate_values:
             self.marker1.visualize(self.fingertip_pos, self.ee_quat)
             self.marker2.visualize(self.teleop_fingertip_pos, self.teleop_quat)
-            self.marker3.visualize(self.intended_battery_pos, self.intended_battery_quat)
-            self.marker4.visualize(self.intended_target_pos, self.intended_target_quat)
+            self.marker5.visualize(self.battery_L_pos, self.battery_L_quat)
+            self.marker6.visualize(self.battery_R_pos, self.battery_R_quat)
 
-            print("fingertip pos: ")
-            format_tensor(self.fingertip_pos)
+            # print("battery L quat: ", self.battery_L_quat)
+            # print("battery R quat: ", self.battery_R_quat)
+
+            # self.marker3.visualize(self.intended_battery_pos, self.intended_battery_quat)
+            # self.marker4.visualize(self.intended_target_pos, self.intended_target_quat)
+
+            # print("fingertip pos: ")
+            # format_tensor(self.fingertip_pos)
     
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -559,8 +576,9 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self._compute_intermediate_values()
 
-        # terminated = self.finger_joint_dif > 0.5
-        terminated = self._robot.data.body_com_state_w[:, 9, 2] < 0.17 #NOTE: 9th body is link_eef
+        terminated = self.finger_joint_dif > 0.5
+        terminated |= self._robot.data.body_com_state_w[:, 9, 2] < 0.17 #NOTE: 9th body is link_eef
+        terminated |= (torch.norm(self.intended_battery_quat - self.intended_target_quat, dim=1) > 0.5) # terminate if battery fell
 
         # if terminated:
         #     import pdb; pdb.set_trace()
@@ -727,34 +745,38 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self._step_sim_no_action()
 
     def _reset_assets(self, env_ids, apply_dmr=False):
-        reseted_root_states = self._battery_L.data.default_root_state.clone()
-        if self.cfg.apply_dmr:
-            reseted_root_states[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x 
-            reseted_root_states[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
+        batt_L_root = self._battery_L.data.default_root_state.clone()
+        if apply_dmr:
+            batt_L_root[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x 
+            batt_L_root[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
         
-        reseted_root_states[env_ids,:3] += self.scene.env_origins[env_ids,:3]
-        self._battery_L.write_root_state_to_sim(root_state=reseted_root_states, env_ids=env_ids) #NOTE: no render on reset
+        batt_L_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
+
+        self._battery_L.write_root_state_to_sim(root_state=batt_L_root, env_ids=env_ids) #NOTE: no render on reset
         self._battery_L.reset(env_ids)
 
-        reseted_root_states = self._battery_R.data.default_root_state.clone()
-        if self.cfg.apply_dmr:
-            reseted_root_states[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x 
-            reseted_root_states[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
+        batt_R_root = self._battery_R.data.default_root_state.clone()
+        if apply_dmr:
+            batt_R_root[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x 
+            batt_R_root[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
         
-        reseted_root_states[env_ids,:3] += self.scene.env_origins[env_ids,:3]
-        self._battery_R.write_root_state_to_sim(root_state=reseted_root_states, env_ids=env_ids) #NOTE: no render on reset
+        batt_R_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
+
+        self._battery_R.write_root_state_to_sim(root_state=batt_R_root, env_ids=env_ids) #NOTE: no render on reset
         self._battery_R.reset(env_ids)
 
         # no dmr for battery box
-        reseted_root_states = self._battery_box.data.default_root_state.clone()    
-        reseted_root_states[env_ids,:3] += self.scene.env_origins[env_ids,:3]
-        self._battery_box.write_root_state_to_sim(root_state=reseted_root_states, env_ids=env_ids) #NOTE: no render on reset
+        batt_box_root = self._battery_box.data.default_root_state.clone()    
+        batt_box_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
+        self._battery_box.write_root_state_to_sim(root_state=batt_box_root, env_ids=env_ids) #NOTE: no render on reset
         self._battery_box.reset(env_ids)
 
     def _get_observations(self) -> dict:       
         if self.cfg.enable_vision:
             depth_clean = self._camera.data.output["distance_to_image_plane"].permute(0,3,1,2)
             depth_filtered = filter_sim_depth(depth_clean) # (num_envs, 120*120) which should give same reading as real
+            self.depth_list.append(depth_filtered.detach().cpu().numpy().reshape(120,120))
+
             normalized_depth = normalize_depth_01(depth_filtered)
 
         if self.num_envs == 1 and self.cfg.enable_vision: 
@@ -764,42 +786,54 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         #     save_tensor_as_txt(depth_filtered, "RRL/sim2real/vision_gap/raw/visual_raw_obs_sim")
         #     import pdb; pdb.set_trace()
         
-        if self.cfg.enable_vision:
-            actor_obs = torch.cat(
-                (
-                    self.fingertip_pos,
-                    self.ee_orn_6D,
-                    self.gripper_binary,
-                    self.teleop_fingertip_pos,
-                    self.teleop_orn_6D,
-                    self.teleop_gripper_binary,
-                    normalized_depth,
-                ),
-                dim=-1,
-            )
-        else:
-            actor_obs = torch.cat(
-                (
-                    self.fingertip_pos,
-                    self.ee_orn_6D,
-                    self.gripper_binary,
-                    self.teleop_fingertip_pos,
-                    self.teleop_orn_6D,
-                    self.teleop_gripper_binary,
-                    self.battery_L_pos,
-                    self.battery_L_orn_6D,
-                    self.battery_R_pos,
-                    self.battery_R_orn_6D,
-                    self.box_lower_limits,
-                    self.box_upper_limits,
-                ),
-                dim=-1,
-            )
+        # if self.cfg.enable_vision:
+        #     actor_obs = torch.cat(
+        #         (
+        #             self.fingertip_pos,
+        #             self.ee_orn_6D,
+        #             self.gripper_binary,
+        #             self.teleop_fingertip_pos,
+        #             self.teleop_orn_6D,
+        #             self.teleop_gripper_binary,
+        #             normalized_depth,
+        #         ),
+        #         dim=-1,
+        #     )
+        # else:
+
+        if True:
+            self.teleop_10D_b_traj.append(self.teleop_10D.clone())
+            if len(self.teleop_10D_b_traj) == 602:
+                save_to_txt(self.teleop_10D_b_traj[2:], "RRL/sim2real/base_traj/base_traj1.txt")
+                print("base traj saved")
+                depth_array = np.stack(self.depth_list, axis=0)  # shape: (T, 120, 120) where T is number of timesteps
+                np.save('depth_recording_sim.npy', depth_array[2:,:,:])  # Save to disk
+                print(f"Saved {depth_array[2:,:,:].shape} depth frames to depth_recording_sim.npy")
+                exit()
+
+
+        actor_obs = torch.cat(
+            (
+                self.fingertip_pos,
+                self.ee_orn_6D,
+                self.gripper_binary,
+                self.teleop_fingertip_pos,
+                self.teleop_orn_6D,
+                self.teleop_gripper_binary,
+                self.battery_L_pos,
+                self.battery_L_orn_6D,
+                self.battery_R_pos,
+                self.battery_R_orn_6D,
+                self.box_lower_limits,
+                self.box_upper_limits,
+            ),
+            dim=-1,
+        )
 
         if self.collect_min_max_obs_values:
             self.collected.append(actor_obs.clone())
 
-        if self.cfg.use_privilege_obs and not self.cfg.enable_vision:
+        if self.cfg.use_privilege_obs: # and not self.cfg.enable_vision:
             critic_obs = torch.cat(
                 (
                     self.fingertip_pos,
@@ -835,8 +869,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         residual_rate = torch.norm((self.ee_residual.clone() - self.last_ee_residual.clone()), p=2, dim=-1)
 
         # gripper height
-        # print(self.ee_goal_b[:,2])
-        gripper_height_penalty = torch.where(self.ee_goal_b[:,2] < 0.2, 1.0, 0.0)
+        gripper_height_penalty = torch.where(self.ee_goal_b[:,2] < 0.18, 1.0, 0.0)
 
         # gripper box collision
         collided = (self.fingertip_pos >= self.box_lower_limits) & (self.fingertip_pos <= self.box_upper_limits) # TODO: check bounds
@@ -844,15 +877,17 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         collision_penalty = torch.where(collided, 1.0, 0.0)
 
         # fingertip battery dist
-        intended_gripper_pos = offset_b_in_target_fr(self.intended_battery_pos, self.intended_battery_quat, [0.0, 0.025, 0.0])
-        # self.marker5.visualize(intended_gripper_pos, self.intended_battery_quat)
-        fingertip_batter_dist = torch.norm(intended_gripper_pos - self.fingertip_pos, dim=1)
-        fingertip_battery_dist_reward = torch.exp(-fingertip_batter_dist / self.cfg.fingertip_dist_std)
+        intended_gripper_pos = offset_b_in_target_fr(self.intended_battery_pos, self.intended_battery_quat, [0.0, 0.0, -0.025])
+        fingertip_battery_dist = torch.norm(intended_gripper_pos - self.fingertip_pos, dim=1)
+        fingertip_battery_dist_reward = torch.exp(-fingertip_battery_dist / self.cfg.fingertip_dist_std)
+
+        fingertip_battery_rot_dist = torch.norm(self.intended_battery_orn_6D - self.ee_orn_6D, dim=1)
+        fingertip_battery_rot_dist_reward = torch.exp(-fingertip_battery_rot_dist / self.cfg.fingertip_rot_dist_std)
 
         # battery goal dist
         baterry_goal_dist = torch.norm(self.intended_target_pos - self.intended_battery_pos, dim=1)
         baterry_goal_dist_reward = torch.exp(-baterry_goal_dist / self.cfg.fingertip_dist_std) * (baterry_goal_dist < 0.15)
-        # print(baterry_goal_dist)
+
 
         # completion reward at end of episode
         completion_condition = (baterry_goal_dist < 0.05) & (self.episode_length_buf >= self.max_episode_length - 1 - 50) # reward for completion in the last 50 time steps!
@@ -864,6 +899,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         rewards = (
             # task completion rewards
             self.cfg.fingertip_dist_reward_scale * fingertip_battery_dist_reward
+            + self.cfg.fingertip_rot_dist_reward_scale * fingertip_battery_rot_dist_reward
             + self.cfg.battery_goal_dist_reward_scale * baterry_goal_dist_reward
             + self.cfg.completion_reward_scale * completion_reward
             # smoothness rewards
@@ -879,6 +915,7 @@ class XArmBatteryResidualCamLocalBinaryV0Env(DirectRLEnv):
         self.extras["log"] = {
             "completion": (self.cfg.completion_reward_scale * completion_reward).mean(),
             "fingertip_battery_dist": (self.cfg.fingertip_dist_reward_scale * fingertip_battery_dist_reward).mean(),
+            "fingertip_battery_rot_dist": (self.cfg.fingertip_rot_dist_reward_scale * fingertip_battery_rot_dist_reward).mean(),
             "battery_goal_dist": (self.cfg.battery_goal_dist_reward_scale * baterry_goal_dist_reward).mean(),
             "residual_penalty": (self.cfg.residual_penalty_scale * residual_penalty).mean(),
             "residual_rate": (self.cfg.residual_rate_scale * residual_rate).mean(),

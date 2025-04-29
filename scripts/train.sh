@@ -12,4 +12,20 @@
 # ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --headless --num_envs 512 --run_name battery_cam_abs_v1 --max_iterations 2000
 
 # battery state-based
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --headless --num_envs 2048 --run_name battery_state_abs_new_term --max_iterations 2000
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --headless --num_envs 2048 --run_name battery_state_abs_no_noise_no_falling --max_iterations 2000
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# new cube
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-v0 --enable_cameras --headless --num_envs 5 --run_name test --max_iterations 20

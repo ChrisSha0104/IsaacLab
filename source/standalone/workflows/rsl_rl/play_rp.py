@@ -136,13 +136,13 @@ def main():
     slowly = False
     
     # turn off dmr during play?
-    apply_dmr = False
-    setattr(env.cfg, "apply_dmr", apply_dmr) # NOTE: only applies after initial reset!!!
+    # apply_dmr = True
+    # setattr(env.cfg, "apply_dmr", apply_dmr) # NOTE: only applies after initial reset!!!
 
-    mark_demo = True
-    mark_ee = True
-    setattr(env.cfg, "mark_demo", mark_demo)
-    setattr(env.cfg, "mark_ee", mark_ee)
+    # mark_demo = True
+    # mark_ee = True
+    # setattr(env.cfg, "mark_demo", mark_demo)
+    # setattr(env.cfg, "mark_ee", mark_ee)
 
     slow_start = False
     i = 0
