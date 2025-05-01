@@ -11,16 +11,16 @@ import torch.optim as optim
 import warnings
 
 from rsl_rl.modules import ActorCritic
-from .encoded_actor_critic import ActorCriticVisual
+from .residual_actor_critic import ResidualActorCritic
 from rsl_rl.modules.rnd import RandomNetworkDistillation
 from rsl_rl.storage import RolloutStorage
 from rsl_rl.utils import string_to_callable
 
 
-class PPOWithResNet:
+class ResidualPPO:
     """Proximal Policy Optimization algorithm (https://arxiv.org/abs/1707.06347)."""
 
-    actor_critic: ActorCriticVisual
+    actor_critic: ResidualActorCritic
     """The actor critic module."""
 
     def __init__(
@@ -131,7 +131,7 @@ class PPOWithResNet:
         if self.actor_critic.is_recurrent:
             self.transition.hidden_states = self.actor_critic.get_hidden_states()
         # Compute the actions and values
-        self.transition.actions = self.actor_critic.act(obs).detach()
+        self.transition.actions = self.actor_critic.act(obs).detach() # actual actions used in env (for training)
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.actor_critic.action_mean.detach()

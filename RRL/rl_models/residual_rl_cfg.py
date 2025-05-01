@@ -29,3 +29,27 @@ class RslRlResidualPpoActorCriticCfg:
 
     critic_activation: str = MISSING
     """The activation function for the critic network."""
+
+    action_head_std: float = MISSING
+    """The initialization gain of the last layer of the action head."""
+
+    action_scale: float = MISSING
+    """The scale of the action residual in the environment."""
+
+    critic_last_layer_bias_const: float = MISSING
+    """The constant bias for the last layer of the critic network."""
+    
+    critic_last_layer_std: float = MISSING
+    """The standard deviation for the last layer of the critic network."""
+
+    use_visual_encoder: bool = MISSING
+    """Whether to use a visual encoder."""
+
+    visual_idx_actor: list[int] = MISSING
+    """The indices for the visual encoder in the actor network."""
+
+    visual_idx_critic: list[int] = MISSING
+    """The indices for the visual encoder in the critic network."""
+
+    encoder_output_dim: int = MISSING
+    """The output dimension of the visual encoder."""

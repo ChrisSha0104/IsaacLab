@@ -12,6 +12,7 @@ from torch.distributions import Normal
 from .res_net import ResNet18Conv
 from .res_net import CNNEncoder
 import time
+from typing import Tuple
 
 from RRL.utilities.traj_generator import save_to_txt
 
@@ -19,8 +20,10 @@ from RRL.utilities.traj_generator import save_to_txt
 Uses rsl-rl actor critic with visual encoder and residual policy related designs (e.g., orthogonal initialization, small gain factors, low initial standard deviation, and smooth activations (SiLU))
 '''
 
-
 def layer_init(layer, nonlinearity="ReLU", std=np.sqrt(2), bias_const=0.0):
+    '''
+    centralize weight/bias initialization for all linear layers
+    '''
     if isinstance(layer, nn.Linear):
         if nonlinearity == "ReLU":
             nn.init.kaiming_normal_(layer.weight, mode="fan_in", nonlinearity="relu")
@@ -62,7 +65,9 @@ def build_mlp(
             )
         )
         layers.append(act_func())
-    layers.append(
+        
+    # orthogonal init with small initial std
+    layers.append( 
         layer_init(
             nn.Linear(hidden_sizes[-1], output_dim, bias=bias_on_last_layer),
             std=output_std,
@@ -72,7 +77,7 @@ def build_mlp(
     )
     return nn.Sequential(*layers)
 
-class ResidualActorCriticVisual(nn.Module):
+class ResidualActorCritic(nn.Module):
     is_recurrent = False
 
     def __init__(
@@ -87,10 +92,10 @@ class ResidualActorCriticVisual(nn.Module):
         critic_num_layers=2,
         critic_activation="SiLU",
         init_logstd=-3,
-        action_head_std=0.0,
-        action_scale=0.1,
-        critic_last_layer_bias_const=0.25,
-        critic_last_layer_std=0.25,
+        action_head_std=0.01, # initialization gain of last layer
+        action_scale=0.1, # scale residual in env
+        critic_last_layer_bias_const=0.0,
+        critic_last_layer_std=1.0,
         critic_last_layer_activation=None,
         use_visual_encoder=True,
         visual_idx_actor=[20,20+120*120],
@@ -154,26 +159,15 @@ class ResidualActorCriticVisual(nn.Module):
         print(f"Actor MLP: {self.actor}")
         print(f"Critic MLP: {self.critic}")
 
-        # Action noise
-        self.logstd = nn.Parameter(
-            torch.ones(num_actions) * init_logstd,
-            requires_grad=kwargs.get("learn_std", True),
+        # learn std
+        self.actor_logstd = nn.Parameter(
+            torch.ones(1, num_actions) * init_logstd,
+            requires_grad=kwargs.get("learn_std", True), # TODO: CHECKTHIS!!!!!!!!!!!!!!
         )
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False # type: ignore
 
-        # seems that we get better performance without init
-        # self.init_memory_weights(self.memory_a, 0.001, 0.)
-        # self.init_memory_weights(self.memory_c, 0.001, 0.)
-
-    # @staticmethod
-    # # not used at the moment
-    # def init_weights(sequential, scales):
-    #     [
-    #         torch.nn.init.orthogonal_(module.weight, gain=scales[idx])
-    #         for idx, module in enumerate(mod for mod in sequential if isinstance(mod, nn.Linear))
-    #     ]
 
     def reset(self, dones=None):
         pass
@@ -192,18 +186,17 @@ class ResidualActorCriticVisual(nn.Module):
     @property
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
+    
+    # ------------------------------------------------------------------
 
-    def update_distribution(self, observations):
+    def update_distribution(self, nobs):
         """
         Update the action distribution based on observations.
         """
         if self.use_visual_encoder:
-            visual_obs = observations[:,self.visual_idx_actor[0]:self.visual_idx_actor[1]].reshape(-1, 1, self.Height, self.Width)
-            visual_embedding = self.visual_encoder(visual_obs)
-            visual_embedding = visual_embedding / (torch.norm(visual_embedding, dim=-1, keepdim=True)/5 + 1e-6)
-            observations = torch.cat((observations[:,:self.visual_idx_actor[0]], visual_embedding), dim=-1)
-        mean = self.actor(observations)  # Compute action mean
-        log_std = self.logstd.expand_as(mean)  # Learnable log standard deviation
+            self.encode_obs(nobs)
+        mean = self.actor(nobs)  # Compute action mean
+        log_std = self.actor_logstd.expand_as(mean)  # Learnable log standard deviation
         std = torch.exp(log_std)  # Convert log standard deviation to positive scale
         self.distribution = Normal(mean, std)
 
@@ -214,28 +207,25 @@ class ResidualActorCriticVisual(nn.Module):
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
-    def act_inference(self, observations):
+    def act_inference(self, nobs):
         """
         Compute the mean action for inference (no sampling).
         """
         if self.use_visual_encoder:
-            visual_obs = observations[:,self.visual_idx_actor[0]:self.visual_idx_actor[1]].reshape(-1, 1, self.Height, self.Width)
-            torch.save(visual_obs.reshape(1,-1), "RRL/sim2real/vision_gap/embedded/visual_obs_sim.pt")
-            visual_embedding = self.visual_encoder(visual_obs)
-            torch.save(visual_embedding, "RRL/sim2real/vision_gap/embedded/embedding_sim.pt")
-            # exit()
-            visual_embedding = visual_embedding / (torch.norm(visual_embedding, dim=-1, keepdim=True)/5 + 1e-6)
-            observations = torch.cat((observations[:,:self.visual_idx_actor[0]], visual_embedding), dim=-1)
-
-        return self.actor(observations)
+            nobs = self.encode_obs(nobs)
+        return self.actor(nobs)
     
-    def evaluate(self, critic_observations, **kwargs):
+    def evaluate(self, nobs, **kwargs):
         """
         Evaluate the critic for the given observations.
         """
         if self.use_visual_encoder:
-            visual_obs = critic_observations[:,self.visual_idx_critic[0]:self.visual_idx_critic[1]].reshape(-1, 1, self.Height, self.Width)
-            visual_embedding = self.visual_encoder(visual_obs)
-            visual_embedding = visual_embedding / (torch.norm(visual_embedding, dim=-1, keepdim=True)/5 + 1e-6)
-            critic_observations = torch.cat((critic_observations[:,:self.visual_idx_critic[0]], visual_embedding), dim=-1)
-        return self.critic(critic_observations)
+            self.encode_obs(nobs)
+        return self.critic(nobs)
+    
+    def encode_obs(self, nobs: torch.Tensor) -> torch.Tensor:
+        visual_obs = nobs[:,self.visual_idx_critic[0]:self.visual_idx_critic[1]].reshape(-1, 1, self.Height, self.Width)
+        visual_embedding = self.visual_encoder(visual_obs)
+        visual_embedding = visual_embedding / (torch.norm(visual_embedding, dim=-1, keepdim=True)/5 + 1e-6)
+        encoded_nobs = torch.cat((nobs[:,:self.visual_idx_critic[0]], visual_embedding), dim=-1)
+        return encoded_nobs

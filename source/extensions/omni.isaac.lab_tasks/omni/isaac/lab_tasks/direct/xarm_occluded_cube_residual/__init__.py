@@ -16,13 +16,13 @@ from .xarm_cube_residual_env import XArmCubeResidualEnvCfg, XArmCubeResidualEnv
 ##
 
 gym.register(
-    id="XArm-Residual-Cube-v0", #NOTE: previous pipeline with Battery
+    id="XArm-Residual-Cube-State-v0", #NOTE: previous pipeline with Battery
     entry_point="omni.isaac.lab_tasks.direct.xarm_occluded_cube_residual:XArmCubeResidualEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": XArmCubeResidualEnvCfg,
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubePPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:XArmResidualCubeStatePPORunnerCfg",
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
     },
 )

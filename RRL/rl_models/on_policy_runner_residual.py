@@ -12,13 +12,11 @@ import torch
 from collections import deque
 
 import rsl_rl
-from rsl_rl.algorithms import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import ActorCritic, ActorCriticRecurrent, EmpiricalNormalization
 from rsl_rl.utils import store_code_state
-from .ppo_resnet import PPOWithResNet
-from .encoded_actor_critic import ActorCriticVisual
-from .residual_actor_critic_vision import ResidualActorCriticVisual
+from .residual_ppo import ResidualPPO
+from .residual_actor_critic import ResidualActorCritic
 
 class OnPolicyRunnerResidual:
     """On-policy runner for training and evaluation."""
@@ -39,18 +37,11 @@ class OnPolicyRunnerResidual:
             num_critic_obs = num_obs
         actor_critic_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic
 
-        if actor_critic_class.__name__ == "ResidualActorCriticVisual":
-            actor_critic: ResidualActorCriticVisual = actor_critic_class( # type: ignore
+        if actor_critic_class.__name__ == "ResidualActorCritic":
+            actor_critic: ResidualActorCritic = actor_critic_class( # type: ignore
                 num_obs, num_critic_obs, self.env.num_actions, 
-                use_visual_encoder=self.env.cfg.use_visual_encoder, # type: ignore
-                visual_idx_actor=self.env.cfg.visual_idx_actor, # type: ignore
-                visual_idx_critic=self.env.cfg.visual_idx_critic, # type: ignore
                 **self.policy_cfg,
                 ).to(self.device)
-        else:
-            actor_critic: ActorCritic | ActorCriticRecurrent | ActorCriticVisual = actor_critic_class(
-                num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
-            ).to(self.device)
 
         # resolve dimension of rnd gated state
         if "rnd_cfg" in self.alg_cfg:
@@ -72,7 +63,7 @@ class OnPolicyRunnerResidual:
 
         # init algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO | PPOWithResNet = alg_class(actor_critic, device=self.device, **self.alg_cfg)
+        self.alg: ResidualPPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]

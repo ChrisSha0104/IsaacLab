@@ -74,6 +74,59 @@ def slerp(q1: torch.Tensor, q2: torch.Tensor, t: float) -> torch.Tensor:
     q_interp = factor1 * q1 + factor2 * q2
     return normalize(q_interp)
 
+import torch
+
+def slerp_traj(q0: torch.Tensor, q1: torch.Tensor, t: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """
+    Spherical linear interpolation between two unit quaternions.
+
+    Args:
+        q0: (N, 4) tensor of starting quaternions (must be unit‐length).
+        q1: (N, 4) tensor of ending   quaternions (must be unit‐length).
+        t:  (N, 1) or (N,) tensor of interpolation weights in [0,1].
+        eps: small threshold for fall‐back to linear interp.
+
+    Returns:
+        (N, 4) tensor of interpolated, unit quaternions.
+    """
+    # Compute dot product between q0 and q1
+    dot = torch.sum(q0 * q1, dim=-1, keepdim=True)            # (N,1)
+    dot = dot.clamp(-1.0, 1.0)
+
+    # If dot<0, slerp won't take the shorter path. Fix by flipping one quaternion.
+    neg_mask = dot < 0
+    q1 = torch.where(neg_mask, -q1, q1)
+    dot = torch.abs(dot)
+
+    # Compute angles and sines
+    theta_0 = torch.acos(dot)                                  # angle between input quats
+    sin_theta_0 = torch.sin(theta_0)                           # always >= 0
+
+    # For very small angles, fall back to linear interpolation to avoid div/0
+    use_linear = sin_theta_0 < eps                             # (N,1)
+
+    # Interpolation factors
+    t = t.view(-1, 1)                                          # ensure shape (N,1)
+    theta_t = theta_0 * t                                      # (N,1)
+    sin_theta_t = torch.sin(theta_t)
+
+    factor0 = torch.where(
+        use_linear,
+        1.0 - t,
+        torch.sin((1.0 - t) * theta_0) / sin_theta_0
+    )                                                          # (N,1)
+
+    factor1 = torch.where(
+        use_linear,
+        t,
+        sin_theta_t / sin_theta_0
+    )                                                          # (N,1)
+
+    # Combine and renormalize
+    q_interp = factor0 * q0 + factor1 * q1                     # (N,4)
+    return q_interp / q_interp.norm(dim=-1, keepdim=True)
+
+
 def slerp_batch(q1: torch.Tensor, q2: torch.Tensor, ts: torch.Tensor) -> torch.Tensor:
     """
     Vectorized spherical linear interpolation (slerp) between two batches of quaternions

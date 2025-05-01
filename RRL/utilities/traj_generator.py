@@ -587,6 +587,220 @@ def cubic_spline_nd_function_torch(points: torch.Tensor,
 
     return spline_func
 
+def nlerp(a: torch.Tensor, b: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    """
+    Batch normalised linear interpolation between two 6D orientation vectors.
+    a, b: (..., 6)
+    alpha: (..., 1) or broadcastable to (..., 6)
+    """
+    v = (1 - alpha) * a + alpha * b
+    return v / v.norm(dim=-1, keepdim=True)
+
+# def add_correlated_noise(
+#     demo_traj: torch.Tensor,
+#     env_ids: torch.Tensor,             
+#     step_interval: int,
+#     apply_z_noise: bool,
+#     pos_noise_level: float,
+#     ori_noise_level: float,
+#     beta: float,
+# ) -> torch.Tensor:
+#     """
+#     Args:
+#       demo_traj:      (E, D, T, 10)
+#       env_ids:        (K,) indices of envs to perturb     
+#       step_interval:  int
+#       apply_z_noise:  bool
+#       pos_noise_level:float
+#       ori_noise_level:float
+#       beta:           float
+
+#     Returns:
+#       new_traj:       (E, D, T, 10), with noise only on env_ids
+#     """
+#     E, D, T, C = demo_traj.shape
+#     assert C == 10, "action_dim must be 10"
+
+#     # clone full tensor up‐front
+#     out = demo_traj.clone()
+
+#     # work on a sub‐tensor of only those envs
+#     sub   = demo_traj[env_ids]           # (K, D, T, 10)
+#     pos   = sub[..., :3]                 # (K, D, T, 3)
+#     ori6  = sub[..., 3:9]                # (K, D, T, 6)
+#     grip  = sub[..., 9:]                 # (K, D, T, 1)
+
+#     # 2) Pick node timesteps (skip t=0)
+#     nodes = list(range(step_interval, T, step_interval))
+#     if nodes[-1] != T-1:
+#         nodes.append(T-1)
+#     nodes = torch.tensor(nodes, device=demo_traj.device)  # (M,)
+#     M = len(nodes)
+
+#     # 3) Convert ori6 at nodes → quaternions
+#     ori6_nodes  = ori6[..., nodes, :]            # (K, D, M, 6)
+#     KD = sub.shape[0] * sub.shape[1]             # K*D
+#     ori6_flat    = ori6_nodes.view(KD * M, 6)    # (KD*M,6)
+#     q_nodes      = quat_from_6d(ori6_flat)       # (KD*M,4)
+#     q_nodes      = q_nodes.view(KD, M, 4)        # (KD, M,4)
+
+#     # 4) Sample raw noise at nodes
+#     raw_pos_noise = torch.randn(sub.shape[0], sub.shape[1], M, 3, device=sub.device) * pos_noise_level
+#     raw_ori_noise = torch.randn(sub.shape[0], sub.shape[1], M, 4, device=sub.device) * ori_noise_level
+
+#     # no noise at t=0-node, apply_z_noise flag
+#     raw_pos_noise[..., 0, :] = 0.0               # already skips t=0, but ensures node[0]
+#     if not apply_z_noise:
+#         raw_pos_noise[..., 2] = 0.0              # zero z noise
+
+#     # 5) Exponential smoothing
+#     corr_pos = torch.zeros_like(raw_pos_noise)
+#     corr_ori = torch.zeros_like(raw_ori_noise)
+#     corr_pos[..., 0, :] = raw_pos_noise[..., 0, :]
+#     corr_ori[..., 0, :] = raw_ori_noise[..., 0, :]
+#     for i in range(1, M):
+#         corr_pos[..., i, :] = beta * corr_pos[..., i-1, :] + (1-beta) * raw_pos_noise[..., i, :]
+#         corr_ori[..., i, :] = beta * corr_ori[..., i-1, :] + (1-beta) * raw_ori_noise[..., i, :]
+
+#     # 6) Apply noise to nodes, renormalize quaternions
+#     pos_nodes = pos[..., nodes, :] + corr_pos          # (K, D, M, 3)
+#     q_noised  = q_nodes + corr_ori.view(KD, M, 4)      # (KD, M,4)
+#     q_noised  = q_noised / q_noised.norm(dim=-1, keepdim=True)
+
+#     # 7) Interpolation setup
+#     t   = torch.arange(T, device=sub.device)
+#     seg = torch.clamp(t // step_interval, max=M-2)     # (T,)
+#     alpha = ((t - nodes[seg]).float() / (nodes[seg+1] - nodes[seg]).float())  # (T,)
+
+#     # flatten for gather
+#     pos_flat = pos_nodes.view(KD, M, 3)
+#     q_flat   = q_noised.view(KD, M, 4)
+#     seg_kd   = seg.unsqueeze(0).expand(KD, T)          # (KD, T)
+#     seg_kd2  = (seg+1).unsqueeze(0).expand(KD, T)
+
+#     # 8) Gather start/end
+#     p0 = pos_flat.gather(1, seg_kd.unsqueeze(-1).expand(-1,-1,3))
+#     p1 = pos_flat.gather(1, seg_kd2.unsqueeze(-1).expand(-1,-1,3))
+#     q0 = q_flat.gather(1, seg_kd.unsqueeze(-1).expand(-1,-1,4))
+#     q1 = q_flat.gather(1, seg_kd2.unsqueeze(-1).expand(-1,-1,4))
+
+#     # 9) Interpolate positions + quaternions
+#     alpha_kd   = alpha.unsqueeze(0).unsqueeze(-1)    # (1, T, 1)
+#     new_pos_flat = (1-alpha_kd)*p0 + alpha_kd*p1     # (KD, T, 3)
+
+#     # SLERP
+#     KDT       = KD * T
+#     q0_flat   = q0.view(KDT, 4)
+#     q1_flat   = q1.view(KDT, 4)
+#     a_flat    = alpha_kd.expand(KD, T, 1).reshape(KDT, 1)
+#     q_interp  = slerp_traj(q0_flat, q1_flat, a_flat)      # (KDT,4)
+#     q_interp  = q_interp / q_interp.norm(dim=-1, keepdim=True)
+#     new_ori6_flat = quat_to_6d(q_interp).view(KD, T, 6)
+
+#     # 10) Reshape & stitch back only into env_ids
+#     new_pos = new_pos_flat.view(sub.shape[0], sub.shape[1], T, 3)
+#     new_ori6= new_ori6_flat.view(sub.shape[0], sub.shape[1], T, 6)
+
+#     out[env_ids, ..., :3]  = new_pos               
+#     out[env_ids, ..., 3:9] = new_ori6              
+#     # gripper bit remains unchanged
+
+#     return out
+
+
+
+def add_correlated_noise_vectorized(
+    trajectories: torch.Tensor,
+    env_ids, # TODO type
+    step_interval: int,
+    noise_level: float,
+    beta: float
+) -> torch.Tensor:
+    """
+    trajectories: (E, D, T, 10)   # 3 pos + 6 ori + 1 grip
+    env_ids:      (K,)           # which envs to perturb
+    step_interval: int           # spacing between noise nodes
+    noise_level:  float          # std dev of raw Gaussian noise
+    beta:         float in [0,1] # smoothing factor (higher=more temporal correlation)
+    """
+    E, D, T, C = trajectories.shape
+    assert C == 10
+
+    # 1) index only the envs we want to perturb
+    sub = trajectories[env_ids]            # (K, D, T, 10)
+    pos = sub[..., :3]                     # (K, D, T, 3)
+    ori6 = sub[..., 3:9]                   # (K, D, T, 6)
+    grip = sub[..., 9:]                    # (K, D, T, 1)
+
+    # 2) determine node indices
+    node_idxs = list(range(0, T, step_interval))
+    if node_idxs[-1] != T-1:
+        node_idxs.append(T-1)
+    nodes = torch.tensor(node_idxs, device=trajectories.device)  # (M,)
+    M = len(nodes)
+
+    # 3) sample raw noise at the nodes, shape (K, D, M, 9)
+    raw_noise = torch.randn(sub.shape[0], sub.shape[1], M, 9, device=sub.device) * noise_level
+    # --- zero out any noise at the first timestep/node so t=0 stays untouched 
+    raw_noise[..., 0, :] = 0.0
+
+    # — Zero out any noise in the z‐axis (pos dim index 2)
+    raw_noise[..., 2] = 0.0 #TODO
+
+    # 4) exponential smoothing along the node‐axis to produce correlated noise
+    corr = torch.zeros_like(raw_noise)
+    corr[..., 0, :] = raw_noise[..., 0, :]
+    for i in range(1, M):
+        corr[..., i, :] = beta * corr[..., i-1, :] + (1 - beta) * raw_noise[..., i, :]
+
+    # 5) add noise to node positions + orientations, then re‐normalize ori6
+    pos_nodes = pos[..., nodes, :] + corr[..., :, :3]             # (K, D, M, 3)
+    ori_nodes = ori6[..., nodes, :] + corr[..., :, 3:]            # (K, D, M, 6)
+    # ori_nodes = ori_nodes / ori_nodes.norm(dim=-1, keepdim=True)
+
+    # 6) build per‐timestep segment indices and interpolation weights
+    t = torch.arange(T, device=sub.device)
+    seg = torch.clamp(t // step_interval, max=M-2)                 # which node interval each t falls into
+    start_idx = nodes[seg]                                        # (T,)
+    end_idx   = nodes[seg + 1]                                    # (T,)
+    alpha = ((t - start_idx).float() / (end_idx - start_idx).float()) # (T,)
+
+    # 7) gather start/end node values for every (K,D,t)
+    #    flatten K,D dims to KD for easier gather:
+    KD = sub.shape[0] * sub.shape[1]
+    pos_flat = pos_nodes.view(KD, M, 3)    # (KD, M,3)
+    ori_flat = ori_nodes.view(KD, M, 6)    # (KD, M,6)
+
+    # prepare indices for gather:
+    seg_kd = seg.unsqueeze(0).expand(KD, T)        # (KD, T)
+    seg_kd2 = (seg + 1).unsqueeze(0).expand(KD, T)
+
+    # gather start/end for position
+    p0 = pos_flat.gather(1, seg_kd.unsqueeze(-1).expand(-1, -1, 3))  # (KD, T,3)
+    p1 = pos_flat.gather(1, seg_kd2.unsqueeze(-1).expand(-1, -1, 3)) # (KD, T,3)
+
+    # gather start/end for orientation
+    o0 = ori_flat.gather(1, seg_kd.unsqueeze(-1).expand(-1, -1, 6))  # (KD, T,6)
+    o1 = ori_flat.gather(1, seg_kd2.unsqueeze(-1).expand(-1, -1, 6)) # (KD, T,6)
+
+    # 8) interpolate
+    alpha_kd = alpha.unsqueeze(0).unsqueeze(-1)  # (1, T, 1) broadcastable
+    new_pos_flat = (1 - alpha_kd) * p0 + alpha_kd * p1        # (KD, T,3)
+    new_ori_flat = nlerp(o0, o1, alpha_kd)                # (KD, T,6)
+
+    # 9) reshape back to (K, D, T, …)
+    new_pos = new_pos_flat.view(sub.shape[0], sub.shape[1], T, 3)
+    new_ori = new_ori_flat.view(sub.shape[0], sub.shape[1], T, 6)
+
+    # 10) stitch back to a full perturbed copy
+    out = trajectories.clone()
+    out[env_ids, ..., :3]  = new_pos
+    out[env_ids, ..., 3:9] = new_ori
+    # gripper bit is untouched
+
+    return out
+
+
 
 def offset_b_in_target_fr(pos, quat, displacement=[0.0, 0.0, 0.15]):
     """
