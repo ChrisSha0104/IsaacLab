@@ -125,7 +125,7 @@ class ResidualActorCritic(nn.Module):
         if self.use_visual_encoder:
             mlp_input_dim_a = num_actor_obs - (visual_idx_actor[1] - visual_idx_actor[0]) + encoder_output_dim # 56+128 = 184
             mlp_input_dim_c = num_critic_obs - (visual_idx_critic[1] - visual_idx_critic[0]) + encoder_output_dim # 56+8+128 = 192
-            self.visual_encoder = ResNetDepthEncoder(output_dim=encoder_output_dim) # input size (N,1,96,96)
+            self.visual_encoder = CNNEncoder(output_dim=encoder_output_dim) # input size (N,1,96,96)
         else:
             mlp_input_dim_a = num_actor_obs
             mlp_input_dim_c = num_critic_obs
@@ -189,13 +189,16 @@ class ResidualActorCritic(nn.Module):
     
     # ------------------------------------------------------------------
 
-    def update_distribution(self, nobs):
+    def update_distribution(self, observations):
         """
         Update the action distribution based on observations.
         """
         if self.use_visual_encoder:
-            self.encode_obs(nobs)
-        mean = self.actor(nobs)  # Compute action mean
+            visual_obs = observations[:,self.visual_idx_actor[0]:self.visual_idx_actor[1]].reshape(-1, 1, self.Height, self.Width)
+            visual_embedding = self.visual_encoder(visual_obs)
+            visual_embedding = visual_embedding / (torch.norm(visual_embedding, dim=-1, keepdim=True)/5 + 1e-6)
+            observations = torch.cat((observations[:,:self.visual_idx_actor[0]], visual_embedding), dim=-1)
+        mean = self.actor(observations)  # Compute action mean
         log_std = self.actor_logstd.expand_as(mean)  # Learnable log standard deviation
         std = torch.exp(log_std)  # Convert log standard deviation to positive scale
         self.distribution = Normal(mean, std)
@@ -207,25 +210,25 @@ class ResidualActorCritic(nn.Module):
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
-    def act_inference(self, nobs):
+    def act_inference(self, observations):
         """
         Compute the mean action for inference (no sampling).
         """
         if self.use_visual_encoder:
-            nobs = self.encode_obs(nobs)
-        return self.actor(nobs)
+            visual_obs = observations[:,self.visual_idx_actor[0]:self.visual_idx_actor[1]].reshape(-1, 1, self.Height, self.Width)
+            visual_embedding = self.visual_encoder(visual_obs)
+            visual_embedding = visual_embedding / (torch.norm(visual_embedding, dim=-1, keepdim=True)/5 + 1e-6)
+            observations = torch.cat((observations[:,:self.visual_idx_actor[0]], visual_embedding), dim=-1)
+
+        return self.actor(observations)
     
-    def evaluate(self, nobs, **kwargs):
+    def evaluate(self, critic_observations, **kwargs):
         """
         Evaluate the critic for the given observations.
         """
         if self.use_visual_encoder:
-            self.encode_obs(nobs)
-        return self.critic(nobs)
-    
-    def encode_obs(self, nobs: torch.Tensor) -> torch.Tensor:
-        visual_obs = nobs[:,self.visual_idx_critic[0]:self.visual_idx_critic[1]].reshape(-1, 1, self.Height, self.Width)
-        visual_embedding = self.visual_encoder(visual_obs)
-        visual_embedding = visual_embedding / (torch.norm(visual_embedding, dim=-1, keepdim=True)/5 + 1e-6)
-        encoded_nobs = torch.cat((nobs[:,:self.visual_idx_critic[0]], visual_embedding), dim=-1)
-        return encoded_nobs
+            visual_obs = critic_observations[:,self.visual_idx_critic[0]:self.visual_idx_critic[1]].reshape(-1, 1, self.Height, self.Width)
+            visual_embedding = self.visual_encoder(visual_obs)
+            visual_embedding = visual_embedding / (torch.norm(visual_embedding, dim=-1, keepdim=True)/5 + 1e-6)
+            critic_observations = torch.cat((critic_observations[:,:self.visual_idx_critic[0]], visual_embedding), dim=-1)
+        return self.critic(critic_observations)

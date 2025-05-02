@@ -18,4 +18,12 @@
 # ./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --num_envs 1 --load_run 2025-04-28_15-19-11_battery_state_abs_no_noise_no_falling
 
 
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-State-v0 --enable_cameras --num_envs 100 --load_run 2025-05-01_19-55-36_new_robot --checkpoint model_1000
+
+###NEW CUBE###
+
+# STATEBASED!!!
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-State-v0 --enable_cameras --num_envs 16 --load_run 2025-05-01_21-20-21_reduced_residual_scale_lowered_fingertip_inst_rew --checkpoint model_720
+
+
+# VISION!!!
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --num_envs 1 --load_run 2025-05-01_22-33-52_vis_test

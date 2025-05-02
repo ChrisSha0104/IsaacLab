@@ -186,9 +186,9 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
 
     # -------- training options -------- 
     training_data_path = "RRL/tasks/cube/training_set1"
-    enable_vision = False
+    enable_vision = True
     enable_residual = True
-    use_privilege_obs = False
+    use_privilege_obs = True
     apply_dmr = True
     augment_real_data = True
 
@@ -449,7 +449,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
                 ),
                 dim=-1,
             )
-            normalized_actor_obs = self.obs_normalizer.normalize(actor_obs)
+            normalized_actor_obs = self.double_action_normalizer.normalize(actor_obs)
             normalized_actor_obs = torch.cat((normalized_actor_obs, normalized_depth), dim=-1)
         else:
             actor_obs = torch.cat(
@@ -465,9 +465,9 @@ class XArmCubeResidualEnv(DirectRLEnv):
                 ),
                 dim=-1,
             )
-            normalized_actor_obs = self.obs_normalizer.normalize(actor_obs)
+            normalized_actor_obs = self.state_obs_normalizer.normalize(actor_obs)
 
-        if self.cfg.use_privilege_obs:
+        if self.cfg.use_privilege_obs and self.cfg.enable_vision:
             critic_obs = torch.cat(
                 (
                     self.fingertip_pos,
@@ -478,12 +478,12 @@ class XArmCubeResidualEnv(DirectRLEnv):
                     self.teleop_gripper_binary,
                     self.cube_pos,
                     self.cube_orn_6D,
-                    self.fingertip_cube_dist.unsqueeze(1),
                 ),
                 dim=-1,
             )
-            normalized_critic_obs = self.obs_normalizer.normalize(critic_obs)
-            normalized_critic_obs = torch.cat((normalized_critic_obs, normalized_depth), dim=-1)
+            normalized_state_obs = self.double_action_normalizer.normalize(critic_obs[:,:20].clone())
+            normalized_cube_obs = self.cube_normalizer.normalize(critic_obs[:,20:].clone())
+            normalized_critic_obs = torch.cat((normalized_state_obs, normalized_cube_obs, normalized_depth), dim=-1)
             
             return {"policy": torch.clamp(normalized_actor_obs, -1.0, 1.0),
                     "critic": torch.clamp(normalized_critic_obs, -1.0, 1.0)}
@@ -577,12 +577,17 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.action_high = torch.tensor([self.cfg.action_upper_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
         self.action_normalizer = ActionNormalizer(self.action_low, self.action_high)
 
+        double_action_low = self.action_low.clone().repeat(1, 2)
+        double_action_high = self.action_high.clone().repeat(1, 2)
+        self.double_action_normalizer = ActionNormalizer(double_action_low, double_action_high)
+
         self.cube_low = torch.tensor([self.cfg.cube_lower_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
         self.cube_high = torch.tensor([self.cfg.cube_upper_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
+        self.cube_normalizer = ActionNormalizer(self.cube_low, self.cube_high)
 
         obs_low = torch.tensor([self.cfg.obs_lower_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
         obs_high = torch.tensor([self.cfg.obs_upper_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
-        self.obs_normalizer = ActionNormalizer(obs_low, obs_high)
+        self.state_obs_normalizer = ActionNormalizer(obs_low, obs_high)
 
         self.fingertip_goal_10D = self.init_10D_pose.clone() # (num_envs, 10)
 

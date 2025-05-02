@@ -27,5 +27,9 @@
 
 
 
-# new cube
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-State-v0 --enable_cameras --headless --num_envs 2048 --run_name reduced_residual_scale_lowered_fingertip_inst_rew --max_iterations 5000
+### new cube ###
+# VISION
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --headless --num_envs 512 --run_name vision_initial_train --max_iterations 5000
+
+# STATEBASED
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-State-v0  --headless --num_envs 2048 --run_name state_initial_train --max_iterations 5000

@@ -170,13 +170,13 @@ def main():
             # env stepping
             obs, rew, dones, extras = env.step(actions)
             # import pdb; pdb.set_trace()
-            if getattr(env.cfg, "show_camera", False): 
-                raw_depth = obs[0,20:].reshape(120,120).detach().cpu().numpy()              # convert to np array
-                # rotated_depth = cv2.rotate(raw_depth, cv2.ROTATE_90_COUNTERCLOCKWISE)
-                depth_vis = cv2.applyColorMap(cv2.convertScaleAbs(raw_depth, alpha=255 / raw_depth[raw_depth < 15].max().item()), cv2.COLORMAP_JET)
-                depth_vis = cv2.resize(depth_vis,(480,480))
-                cv2.imshow("depth_image",depth_vis)
-                cv2.waitKey(1)
+            # if getattr(env.cfg, "show_camera", False): 
+            #     raw_depth = obs[0,20:].reshape(120,120).detach().cpu().numpy()              # convert to np array
+            #     # rotated_depth = cv2.rotate(raw_depth, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            #     depth_vis = cv2.applyColorMap(cv2.convertScaleAbs(raw_depth, alpha=255 / raw_depth[raw_depth < 15].max().item()), cv2.COLORMAP_JET)
+            #     depth_vis = cv2.resize(depth_vis,(480,480))
+            #     cv2.imshow("depth_image",depth_vis)
+            #     cv2.waitKey(1)
             
             # import pdb; pdb.set_trace()
             
