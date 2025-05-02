@@ -26,7 +26,7 @@ class UrdfConverterCfg(AssetConverterBaseCfg):
     If the ``"inertial"`` tag is missing, then it is imported as an identity.
     """
 
-    convex_decompose_mesh = False
+    convex_decompose_mesh: bool = False
     """Decompose a convex mesh into smaller pieces for a closer fit. Defaults to False."""
 
     fix_base: bool = MISSING

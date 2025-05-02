@@ -94,6 +94,32 @@ class CNNEncoder(nn.Module):
         x = self.fc(x)
         return x
 
+class ResNetDepthEncoder(nn.Module):
+    def __init__(self, 
+                 output_dim=128, 
+                 pretrained=True):
+        super().__init__()
+        resnet = vision_models.resnet18(pretrained=pretrained)
+        resnet.conv1 = nn.Conv2d(
+            in_channels=1, out_channels=64,
+            kernel_size=7, stride=2, padding=3, bias=False
+        )
+        self.encoder = nn.Sequential(
+            resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool,
+            resnet.layer1, resnet.layer2, resnet.layer3, resnet.layer4,
+            nn.AdaptiveAvgPool2d((1,1)), nn.Flatten(),
+            nn.Linear(512, output_dim),
+        )
+
+    def forward(self, depth_img):
+        # depth_img: (B, 120*120) with values in [0,1]
+        B = depth_img.shape[0]
+        x = depth_img.view(B, 1, 120, 120)   # ← reshape into (B,1,H,W)
+        return self.encoder(x)
+    
+
+
+
 class ResNet18Conv(ConvBase):
     """
     A ResNet18 block that can be used to process input images.

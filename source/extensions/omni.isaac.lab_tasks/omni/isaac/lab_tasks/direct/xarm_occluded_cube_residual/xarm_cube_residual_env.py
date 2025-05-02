@@ -79,15 +79,18 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     robot = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path="/home/shuosha/projects/IsaacLab/RRL/robot/xarm/xarm7_with_gripper.usd",
+            usd_path="RRL/robot/sapien_xarm7/xarm_urdf/xarm7_gripper.usd",
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
                 max_depenetration_velocity=5.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True, solver_position_iteration_count=12, solver_velocity_iteration_count=1
-            ),                  
+                enabled_self_collisions=True, 
+                solver_position_iteration_count=12, 
+                solver_velocity_iteration_count=1
+            ),
+            joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="acceleration"),                  
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
@@ -98,44 +101,31 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
                 "joint5": 0.0,
                 "joint6": 1.31, # 75
                 "joint7": 0.0,
-                "drive_joint": 0.0,
-                "left_finger_joint": 0.0,
+                "gripper": 0.0, # 0.0 to 1.7
+                "left_driver_joint": 0.0,
                 "left_inner_knuckle_joint": 0.0,
-                "right_outer_knuckle_joint": 0.0,
-                "right_finger_joint": 0.0,
+                "left_finger_joint": 0.0,
+                "right_driver_joint": 0.0,
                 "right_inner_knuckle_joint": 0.0,
+                "right_finger_joint": 0.0,
             },
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         actuators={
-            "shoulder": ImplicitActuatorCfg(
-                joint_names_expr=["joint[1-2]"],
-                effort_limit=50.0,
-                velocity_limit=3.14,
-                stiffness=80.0, 
-                damping=10.0,
-            ),
-            "upper_arm": ImplicitActuatorCfg(
-                joint_names_expr=["joint[3-5]"],
-                effort_limit=30.0,
-                velocity_limit=3.14,
-                stiffness=30.0,
-                damping=5.0,
-            ),
-            "forearm": ImplicitActuatorCfg(
-                joint_names_expr=["joint[6-7]"],
-                effort_limit=20.0,
-                velocity_limit=3.14,
-                stiffness=10.0,
-                damping=2.0,
+            "arm": ImplicitActuatorCfg(
+                joint_names_expr=["joint[1-7]"],
+                # effort_limit=50.0,
+                # velocity_limit=3.14,
+                stiffness=200,#80.0, 
+                damping=20,#10.0,
             ),
             "xarm_hand": ImplicitActuatorCfg(
-                joint_names_expr=["drive_joint"], 
-                effort_limit=40.0,
-                velocity_limit=0.01,
-                stiffness=2e3,
-                damping=1e2,
+                joint_names_expr=["gripper"], 
+                # effort_limit=200.0,
+                # velocity_limit=0.3,
+                stiffness=1e4,#7500.0,
+                damping=1e2,#173.0,
             ),
         },
     )
@@ -159,11 +149,11 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
                     disable_gravity=False,
                 ),
             ),
-        )
+        )   
 
     # cameras
     camera = TiledCameraCfg(
-        prim_path="/World/envs/env_.*/Robot/link_eef/cam",
+        prim_path="/World/envs/env_.*/Robot/link7/cam",
         offset=TiledCameraCfg.OffsetCfg(pos=(0.13, 0.0, 0.008), rot=(0.9744,0,-0.2334,0), convention="ros"), # z-down; x-forward
         height=120,
         width=120,
@@ -205,7 +195,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     # -------- training params --------
     traj_length = 400
     num_demos = 5
-    alpha = 0.25 # residual scale
+    alpha = 0.1 # residual scale
     tilde = 1.0 # low pass filter
 
     # -------- initialization --------
@@ -236,6 +226,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     # -------- visualization options -------- 
     show_camera = False
     debug_intermediate_values = False
+    order_demos = False
 
     # -------- sim2real options -------- 
     store_observations = False
@@ -292,10 +283,10 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.cube_orn_6D = quat_to_6d(self.cube_quat)
 
         if self.cfg.debug_intermediate_values:
-            # self.marker1.visualize(self.fingertip_pos, self.ee_quat)
-            self.marker2.visualize(self.teleop_fingertip_pos, self.teleop_quat)
-            self.marker3.visualize(self.cube_pos, self.cube_quat)
-            # self.marker4.visualize(self.pick_up_pose_10D[torch.arange(self.num_envs, device=self.device), self.demo_idx, :3], quat_from_6d(self.pick_up_pose_10D[torch.arange(self.num_envs, device=self.device), self.demo_idx, 3:9]))
+            self.marker1.visualize(self.fingertip_pos + self.scene.env_origins, self.ee_quat)
+            self.marker4.visualize(self.ee_pos + self.scene.env_origins, self.ee_quat)
+            self.marker2.visualize(self.teleop_fingertip_pos + self.scene.env_origins, self.teleop_quat)
+            self.marker3.visualize(self.cube_pos + self.scene.env_origins, self.cube_quat)
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -338,7 +329,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
         if self.cfg.enable_residual:
             nbase = self.action_normalizer.normalize(self.teleop_fingertip_10D.clone())
             n_fingertip_goal_10D = nbase + self.cfg.alpha * n_residual_10D
-            self.fingertip_goal_10D = self.action_normalizer.denormalize(n_fingertip_goal_10D.clone())
+            self.fingertip_goal_10D = self.action_normalizer.denormalize(n_fingertip_goal_10D.clone()) # negative finger goal!!!!
         else: 
             self.fingertip_goal_10D = self.teleop_fingertip_10D.clone()
 
@@ -352,7 +343,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
         fingertip_goal_filtered_10D = self.cfg.tilde * self.fingertip_goal_10D.clone() + (1-self.cfg.tilde) * self.last_fingertip_goal_10D.clone()
         fingertip_goal_filtered_10D[:,:3] = torch.clamp(fingertip_goal_filtered_10D[:,:3], self.action_low[:,:3], self.action_high[:,:3])
         fingertip_goal_filtered_10D[:,-1] = (fingertip_goal_filtered_10D[:,-1] > 0.5).float() # TODO: change to -1,1, i,e gripper > 0
-
         # print("actual goal: ", fingertip_goal_filtered_10D)
 
         self.joint_pos = self.get_qpos_from_fingertip_10d(self.diff_ik_controller, fingertip_goal_filtered_10D, apply_smoothing=True)                                  # ee_goal always abs coordinates
@@ -362,17 +352,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
     def _apply_action(self): # TODO: check this
         # apply action for arm and drive joint
-        self._robot.set_joint_position_target(self.robot_dof_targets[:,:-1], joint_ids=[i for i in range(self.num_eff_joints-1)])
-
-        # update finger joint diff for real time adjustments
-        self.finger_joint_dif = self._robot.data.joint_pos[:,7:].max(dim=1).values - self._robot.data.joint_pos[:,7:].min(dim=1).values
-        finger_target = self.robot_dof_targets[:,-1:]
-
-        # modify envs with invalid finger commands
-        invalid_env_ids =  self.finger_joint_dif > 0.01 #| self.gripper_force > 30 #NOTE: stick to 0.05, smaller value -> cube slips
-        finger_target[invalid_env_ids] = torch.mean(self._robot.data.joint_pos[invalid_env_ids,7:], dim=1).unsqueeze(1)#.repeat(1,6)
-    
-        self._robot.set_joint_position_target(finger_target, joint_ids=[7])  
+        self._robot.set_joint_position_target(self.robot_dof_targets[:,:], joint_ids=[i for i in range(self.num_eff_joints)])
 
     def step(self, output):
         _return = super().step(output)
@@ -386,14 +366,9 @@ class XArmCubeResidualEnv(DirectRLEnv):
     # post-physics step calls 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self._compute_intermediate_values()
-        terminated = self.finger_joint_dif > 0.5
-        terminated |= self.fingertip_pos[:,2] < 0.02
-        # if (self.finger_joint_dif > 0.1).any():
-        #     import pdb; pdb.set_trace()
+        terminated = self.fingertip_pos[:,2] < 0.02
 
         truncated = self.episode_length_buf >= self.max_episode_length - 1
-
-        self.terminated_penalty = torch.where(terminated, -1.0, 0.0)
 
         return terminated, truncated
     
@@ -402,26 +377,23 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
     def _compute_rewards(self):
         self.fingertip_cube_dist = torch.norm(self.fingertip_pos - self.cube_pos, dim=-1) # (num_envs, )     
-        reached_cube = torch.where((self.fingertip_cube_dist < 0.05), 1.0, 0.0) 
-                                  #& (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0)
-        picked_cube = torch.where((self.cube_pos[:,2] > self.cfg.minimum_height), 1.0, 0.0) 
-                                  #& (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) 
+        reached_cube = torch.where((self.fingertip_cube_dist < 0.05)
+                                  & (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) # extend for longer time
+        picked_cube = torch.where((self.cube_pos[:,2] > self.cfg.minimum_height)
+                                  & (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) 
         completion_reward = reached_cube + 2 * picked_cube
 
         rewards = (
             self.cfg.completion_reward_scale * completion_reward
-            # + self.terminated_penalty
         )
 
         low_finger = torch.where(self.fingertip_pos[:,2] < 0.02, -1.0, 0.0)
-        finger_collision = torch.where(self.finger_joint_dif > 0.5, -1.0, 0.0)
 
         self.extras["log"] = {
             "fingertip_cube_dist": self.fingertip_cube_dist.mean(),
             "reached_cube": reached_cube.mean(),
             "picked_cube": picked_cube.mean(),
             "low_finger": low_finger.mean(),
-            "finger_collision": finger_collision.mean(),
         }
 
         return rewards
@@ -572,21 +544,25 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
         # self.robot_position_upper_limits = torch.tensor([[0.65, 0.5, 0.5]], device=self.device)
         # self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.18]], device=self.device)
-        self.finger_offset_ee_fr = torch.tensor([[0.0, 0.0, 0.14]], device=self.device).repeat(self.num_envs, 1)
+        self.finger_offset_ee_fr = torch.tensor([[0.0, 0.0, 0.155]], device=self.device).repeat(self.num_envs, 1)
+        self.gripper_base_offset_ee_fr = torch.tensor([[0.0, 0.0, -0.04]], device=self.device).repeat(self.num_envs, 1)
 
-        self.num_eff_joints = self._robot.num_joints - 5
+        self.num_eff_joints = 8#self._robot.num_joints - 5
         self.robot_dof_targets = torch.zeros((self.num_envs, self.num_eff_joints), device=self.device)
         self.joint_ids = list(range(self._robot.num_joints))
 
         # reading trajectories        
         self.time_step_per_env = torch.zeros(self.num_envs, device=self.device, dtype=torch.long) # (num_envs, )
-        self.demo_idx = torch.randint(
-                            low=0,
-                            high=self.cfg.num_demos,
-                            size=(self.num_envs,),
-                            device=self.device,
-                            dtype=torch.long,
-                        )
+        if self.cfg.order_demos:
+            self.demo_idx = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+        else: 
+            self.demo_idx = torch.randint(
+                                low=0,
+                                high=self.cfg.num_demos,
+                                size=(self.num_envs,),
+                                device=self.device,
+                                dtype=torch.long,
+                            )
         self.env_idx = torch.arange(self.num_envs, device=self.device) # (num_envs, )
 
         self.traj_length = self.cfg.traj_length
@@ -626,7 +602,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
     def _init_controller(self):
         diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
         self.diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=self.num_envs, device=self.device)
-
 
     def _generate_clean_demo_traj(self, dir: str, num_demos: int, init_pos: torch.Tensor):
         all_demos = []
@@ -669,7 +644,9 @@ class XArmCubeResidualEnv(DirectRLEnv):
             tuple: ee_pos, ee_orn_quat, ee_orn_6D, finger_status
         """
         # ee and root pose in world frame
-        ee_pose_w = self._robot.data.body_com_state_w[:,9,:]
+        ee_pose_w = self._robot.data.body_com_state_w[:,7,:]
+        ee_pose_w[:,:3] = ee_pose_w[:,:3] + tf_vector(ee_pose_w[:,3:7], self.gripper_base_offset_ee_fr)
+        
         root_pose_w = self._robot.data.root_state_w[:]
 
         # ee pose in base (local) frame
@@ -724,14 +701,15 @@ class XArmCubeResidualEnv(DirectRLEnv):
         ik_commands = ee_goal_7d #(num_envs, 7)
         controller.set_command(ik_commands)
         
-        ee_jacobi_idx = self._robot.find_bodies("link_eef")[0][0]-1
+        ee_jacobi_idx = self._robot.find_bodies("link7")[0][0]-1 # or link7?
+        # import pdb; pdb.set_trace()
         jacobian = self._robot.root_physx_view.get_jacobians()[:,ee_jacobi_idx,:, self.joint_ids[:7]] #(num_envs, 6, 7)
         joint_pos = self._robot.data.joint_pos[:,self.joint_ids[:7]] # (num_envs, 7)
 
         joint_pos_des_arm = controller.compute(self.ee_pos, self.ee_quat, jacobian, joint_pos)
 
         gripper_status = fingertip_10D[:, -1:].clone() # binary gripper + residual output
-        gripper_status[gripper_status > 0.5] = 0.6          # NOTE: close gripper in qpos
+        gripper_status[gripper_status > 0.5] = 1.7          # NOTE: close gripper in qpos
         gripper_status[gripper_status < 0.5] = 0.0          # NOTE: open gripper in qpos
 
 
@@ -784,7 +762,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
             joint_pos[:,:7] += sample_uniform( 
                                 -0.125, # NOTE originally 0.125
                                 0.125,
-                                (len(env_ids), self._robot.num_joints-6),
+                                (len(env_ids), 7),
                                 self.device,
                             )
             joint_pos = torch.clamp(joint_pos, self.robot_dof_lower_limits, self.robot_dof_upper_limits)
@@ -818,8 +796,8 @@ class XArmCubeResidualEnv(DirectRLEnv):
         cube_root[:,:3] = reset_cube_pos[:,:3]
 
         if apply_dmr:
-            cube_root[env_ids,0] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #x 
-            cube_root[env_ids,1] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #y
+            cube_root[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x 
+            cube_root[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
 
         cube_root[:,:3] = torch.clamp(cube_root[:,:3], self.cube_low[:,:3], self.cube_high[:,:3]) # (num_envs, 3)
         cube_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
@@ -855,6 +833,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
                                                                         step_interval=step_interval, 
                                                                         noise_level=pos_noise, 
                                                                         beta=beta_filter) # ee traj
+            
 
         # clear obs buffers
         # self.teleop_10D[env_ids,:] = self.training_demo_traj[env_ids, self.demo_idx[env_ids], 0, :]

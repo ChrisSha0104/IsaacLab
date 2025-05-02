@@ -28,4 +28,4 @@
 
 
 # new cube
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-State-v0 --enable_cameras --headless --num_envs 1024 --run_name test_curr_env_dense --max_iterations 5000
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-State-v0 --enable_cameras --headless --num_envs 2048 --run_name reduced_residual_scale_lowered_fingertip_inst_rew --max_iterations 5000

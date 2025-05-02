@@ -90,8 +90,11 @@ def main():
         asset_path=urdf_path,
         usd_dir=os.path.dirname(dest_path),
         usd_file_name=os.path.basename(dest_path),
+        convex_decompose_mesh=True,
         fix_base=args_cli.fix_base,
         merge_fixed_joints=args_cli.merge_joints,
+        self_collision=False,
+        default_drive_type="position",
         force_usd_conversion=True,
         make_instanceable=args_cli.make_instanceable,
     )

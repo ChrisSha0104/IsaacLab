@@ -18,5 +18,4 @@
 # ./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --num_envs 1 --load_run 2025-04-28_15-19-11_battery_state_abs_no_noise_no_falling
 
 
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-State-v0 --enable_cameras --num_envs 100 --load_run 2025-04-30_19-52-43_test_curr_env_dense 
-
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-State-v0 --enable_cameras --num_envs 100 --load_run 2025-05-01_19-55-36_new_robot --checkpoint model_1000

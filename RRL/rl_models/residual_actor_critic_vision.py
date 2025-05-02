@@ -9,8 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
-from .res_net import ResNet18Conv
-from .res_net import CNNEncoder
+from .res_net import CNNEncoder, ResNetDepthEncoder
 import time
 
 from RRL.utilities.traj_generator import save_to_txt

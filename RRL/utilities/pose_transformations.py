@@ -314,7 +314,6 @@ def sixd_to_rotation_matrix(sixd: torch.Tensor, eps=1e-6, collinearity_thresh=0.
     # Check norm of first vector.
     a_norm = a.norm(dim=1, keepdim=True)
     if torch.isnan(a_norm).any() or torch.isinf(a_norm).any():
-        import pdb; pdb.set_trace()
         raise ValueError("Invalid values in a_norm")
     if (a_norm < eps).any():
         # Replace near-zero vectors with a default direction.

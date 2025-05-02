@@ -9,8 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
-from .res_net import ResNet18Conv
-from .res_net import CNNEncoder
+from .res_net import CNNEncoder, ResNetDepthEncoder
 import time
 from typing import Tuple
 
@@ -101,6 +100,7 @@ class ResidualActorCritic(nn.Module):
         visual_idx_actor=[20,20+120*120],
         visual_idx_critic=[29,29+120*120],
         encoder_output_dim=128,
+        learn_std=True,
         **kwargs,
     ):
         if kwargs:
@@ -125,7 +125,7 @@ class ResidualActorCritic(nn.Module):
         if self.use_visual_encoder:
             mlp_input_dim_a = num_actor_obs - (visual_idx_actor[1] - visual_idx_actor[0]) + encoder_output_dim # 56+128 = 184
             mlp_input_dim_c = num_critic_obs - (visual_idx_critic[1] - visual_idx_critic[0]) + encoder_output_dim # 56+8+128 = 192
-            self.visual_encoder = CNNEncoder(output_dim=encoder_output_dim) # input size (N,1,96,96)
+            self.visual_encoder = ResNetDepthEncoder(output_dim=encoder_output_dim) # input size (N,1,96,96)
         else:
             mlp_input_dim_a = num_actor_obs
             mlp_input_dim_c = num_critic_obs
@@ -162,7 +162,7 @@ class ResidualActorCritic(nn.Module):
         # learn std
         self.actor_logstd = nn.Parameter(
             torch.ones(1, num_actions) * init_logstd,
-            requires_grad=kwargs.get("learn_std", True), # TODO: CHECKTHIS!!!!!!!!!!!!!!
+            requires_grad=learn_std, # TODO: CHECKTHIS!!!!!!!!!!!!!!
         )
         self.distribution = None
         # disable args validation for speedup
