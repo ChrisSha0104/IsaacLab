@@ -1,0 +1,12 @@
+init cube pos: tensor([ 0.3855, -0.0903,  0.0260], device='cuda:0')
+init robot pos: tensor([0.2568, 0.0076, 0.4063], device='cuda:0')
+init teleop pos: tensor([0.2560, 0.0050, 0.4000], device='cuda:0')
+
+
+
+
+# TMP:
+init cube pos: tensor([ 0.3855, -0.0903,  0.0260], device='cuda:0')
+init robot pos: tensor([[ 2.5682e-01,  7.5890e-03,  4.0632e-01,  9.9993e-01, -9.8264e-04, -1.2139e-02,  4.0770e-04, -9.9348e-01,  1.1400e-01,  0.0000e+00]], device='cuda:0')
+init teleop pos: tensor([ 0.2568,  0.0076,  0.4063,  1.0000,  0.0000,  0.0000,  0.0000, -1.0000,
+0.0000,  0.0000], device='cuda:0')

@@ -20,7 +20,7 @@ class XArmResidualCubeStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 16
     max_iterations = 2000
     save_interval = 50
-    experiment_name = "xarm-cube-residual-new" #TODO: change to state
+    experiment_name = "xarm-cube-residual-state" 
     empirical_normalization = False
     policy = RslRlResidualPpoActorCriticCfg(
         class_name="ResidualActorCritic",

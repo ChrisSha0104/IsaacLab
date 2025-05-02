@@ -95,11 +95,11 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
                 "joint1": 0.0,
-                "joint2": -0.785, #-45
+                "joint2": -np.pi / 4, #-45
                 "joint3": 0.0,
-                "joint4": 0.52, # 30
+                "joint4": np.pi / 6, # 30
                 "joint5": 0.0,
-                "joint6": 1.31, # 75
+                "joint6": np.pi / 12 * 5, # 75
                 "joint7": 0.0,
                 "gripper": 0.0, # 0.0 to 1.7
                 "left_driver_joint": 0.0,
@@ -153,19 +153,14 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
 
     # cameras
     camera = TiledCameraCfg(
-        prim_path="/World/envs/env_.*/Robot/link7/cam",
+        prim_path="/World/envs/env_.*/Robot/link7/cam", # TODO: TUNE OFFSET # TODO: ADD NOISE
         offset=TiledCameraCfg.OffsetCfg(pos=(0.13, 0.0, 0.008), rot=(0.9744,0,-0.2334,0), convention="ros"), # z-down; x-forward
         height=120,
         width=120,
         data_types=[
-            # "rgb",
             "distance_to_image_plane",
-            # "normals",
-            # "semantic_segmentation",
-            # "instance_segmentation_fast",
-            # "instance_id_segmentation_fast",
             ],
-        spawn=sim_utils.PinholeCameraCfg(
+        spawn=sim_utils.PinholeCameraCfg( # TODO: TUNE CAMERA PARAMETERS
             focal_length=21.315, focus_distance=400.0, horizontal_aperture=24, clipping_range=(0.01, 20) # NOTE: unit in cm
         ),
     )
@@ -186,9 +181,9 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
 
     # -------- training options -------- 
     training_data_path = "RRL/tasks/cube/training_set1"
-    enable_vision = True
+    enable_vision = False
     enable_residual = True
-    use_privilege_obs = True
+    use_privilege_obs = False
     apply_dmr = True
     augment_real_data = True
 
@@ -199,7 +194,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     tilde = 1.0 # low pass filter
 
     # -------- initialization --------
-    init_10D_pose = [0.256, 0.00,  0.399, 
+    init_10D_pose = [0.2568, 0.005,  0.4005, # unit: m
                      1.00, 0.00, 0.00, 0.00, -1.00, 0.00, 
                      0.00] # TODO: change gripper to -1 and 1
     action_lower_limit = [0.15, -0.4, 0.03, 
@@ -224,12 +219,13 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     visual_idx_critic = [20,20+120*120]
 
     # -------- visualization options -------- 
-    show_camera = False
+    show_camera = True
     debug_intermediate_values = False
     order_demos = False
 
     # -------- sim2real options -------- 
-    store_observations = False
+    store_sim_trajectory = False
+    storing_path = "RRL/tasks/cube/sim2real/traj1"
 
     # -------- rewards --------
     completion_reward_scale = 1.0
@@ -268,15 +264,25 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.teleop_pos, self.teleop_quat, self.teleop_orn_6D, self.teleop_gripper_binary = self.get_teleop_state_info_b()
         self.teleop_10D = torch.cat((self.teleop_pos, self.teleop_orn_6D, self.teleop_gripper_binary), dim=-1) # (num_envs, 10)
 
+        # print("ee 10d")
+        # format_tensor(self.ee_10D)
+        # print("teleop 10d")
+        # format_tensor(self.teleop_10D)
+
         # fingertip positions
-        self.fingertip_pos  = self.ee_pos + tf_vector(self.ee_quat, self.finger_offset_ee_fr) # TODO: check if this is correct
+        self.fingertip_pos = self.ee_pos + tf_vector(self.ee_quat, self.finger_offset_ee_fr) # TODO: check if this is correct
         self.fingertip_10D = torch.cat((self.fingertip_pos, self.ee_orn_6D, self.gripper_binary), dim=-1) # (num_envs, 10)
 
         self.teleop_fingertip_pos = self.teleop_pos + tf_vector(self.teleop_quat, self.finger_offset_ee_fr)
         self.teleop_fingertip_10D = torch.cat((self.teleop_fingertip_pos, self.teleop_orn_6D, self.teleop_gripper_binary), dim=-1) # (num_envs, 10)
 
+        # print("fingertip 10d")
+        # format_tensor(self.fingertip_10D)
+        # print("teleop fingertip 10d")
+        # format_tensor(self.teleop_fingertip_10D)
+
         # cube states
-        robot_root_w = self._robot.data.root_state_w[:]
+        robot_root_w = self._robot.data.root_state_w[:].clone()
         self.cube_pos, self.cube_quat = subtract_frame_transforms(
             robot_root_w[:, 0:3], robot_root_w[:, 3:7], self._cube.data.body_com_state_w[:,0,:3], self._cube.data.body_com_state_w[:,0,3:7]
         )
@@ -285,7 +291,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
         if self.cfg.debug_intermediate_values:
             self.marker1.visualize(self.fingertip_pos + self.scene.env_origins, self.ee_quat)
             self.marker4.visualize(self.ee_pos + self.scene.env_origins, self.ee_quat)
-            self.marker2.visualize(self.teleop_fingertip_pos + self.scene.env_origins, self.teleop_quat)
+            # self.marker2.visualize(self.teleop_fingertip_pos + self.scene.env_origins, self.teleop_quat)
             self.marker3.visualize(self.cube_pos + self.scene.env_origins, self.cube_quat)
 
     def _setup_scene(self):
@@ -322,6 +328,10 @@ class XArmCubeResidualEnv(DirectRLEnv):
     # pre-physics step calls
     def _pre_physics_step(self, noutput: torch.Tensor):
         n_residual_10D = noutput.clone()[:,:10]
+
+        if self.cfg.store_sim_trajectory:
+            self.residual_list.append(n_residual_10D.clone())
+
         # TODO: autonomy_param = noutput.clone()[:,-1:] # TODO: check if 10 dim is better
 
         self.last_fingertip_goal_10D = self.fingertip_goal_10D.clone() # last fingertip action
@@ -370,6 +380,26 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
         truncated = self.episode_length_buf >= self.max_episode_length - 1
 
+        if self.cfg.store_sim_trajectory:
+            if len(self.state_list) == self.traj_length + 2:
+                os.makedirs(self.cfg.storing_path, exist_ok=True)
+                state_tensor = torch.stack(self.state_list, dim=0).reshape(-1, 10)
+                torch.save(state_tensor[2:], os.path.join(self.cfg.storing_path, "sim_state_obs.pt"))
+                teleop_tensor = torch.stack(self.teleop_list, dim=0).reshape(-1, 10)
+                torch.save(teleop_tensor[2:], os.path.join(self.cfg.storing_path, "sim_teleop_obs.pt"))
+                cube_tensor = torch.stack(self.cube_list, dim=0).reshape(-1, 9)
+                torch.save(cube_tensor[2:], os.path.join(self.cfg.storing_path, "sim_cube_obs.pt"))
+                residual_tensor = torch.stack(self.residual_list, dim=0).reshape(-1, 10)
+                torch.save(residual_tensor, os.path.join(self.cfg.storing_path, "sim_residual_output.pt"))
+                if self.cfg.enable_vision:
+                    depth_tensor = torch.stack(self.depth_list, dim=0).reshape(-1, 120*120)
+                    np.save(os.path.join(self.cfg.storing_path, "sim_depth_obs.npy"), depth_tensor.detach().cpu().numpy())
+                print(f"init cube pos: {cube_tensor[2, :3]}")
+                print(f"init robot pos: {state_tensor[2]}")
+                print(f"init teleop pos: {teleop_tensor[2]}")
+                print(f"sim data stored at {self.cfg.storing_path}")
+                exit()
+
         return terminated, truncated
     
     def _get_rewards(self) -> torch.Tensor:
@@ -401,29 +431,25 @@ class XArmCubeResidualEnv(DirectRLEnv):
     def _reset_idx(self, env_ids):
         super()._reset_idx(env_ids)
         
-        # reset time and demo counter
-        self._reset_buffers(env_ids)
+        # reset time, demo counter, and training traj
+        self._reset_buffers(env_ids, self.cfg.augment_real_data)
         
         # reset robot states
         self._reset_robot_state(env_ids, self.cfg.apply_dmr)
 
-        # step through physics
-        self._step_sim_no_action()
-        
-        # recompute / update training traj based on randomized robot state
-        self._reset_demo_traj(env_ids, self.cfg.augment_real_data)
-
         # reset cube states based on new training traj
         self._reset_assets(env_ids, self.cfg.apply_dmr)
 
+        # reset camera and controller
         if self.cfg.enable_vision:
             self._camera.reset(env_ids)
         self.diff_ik_controller.reset(env_ids) # type: ignore
 
         # step through physics
         self._step_sim_no_action()
-
-
+        
+        # recompute / update training traj based on randomized robot state
+        self._update_training_traj(env_ids, self.cfg.augment_real_data)
 
     def _get_observations(self) -> dict:   
         if self.cfg.enable_vision:
@@ -431,7 +457,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
             depth_filtered = filter_sim_depth(depth_clean) # (num_envs, 120*120) which should give same reading as real
             normalized_depth = normalize_depth_01(depth_filtered)
         
-        if self.num_envs == 1 and self.cfg.show_camera:
+        if self.num_envs == 1 and self.cfg.show_camera and self.cfg.enable_vision:
             depth_vis = filter_depth_for_visualization(depth_filtered.reshape(120,120).detach().cpu().numpy(), unit='m') # only works for 1 env
             cv2.imshow("depth_image", depth_vis)
             cv2.waitKey(1)
@@ -485,15 +511,19 @@ class XArmCubeResidualEnv(DirectRLEnv):
             normalized_cube_obs = self.cube_normalizer.normalize(critic_obs[:,20:].clone())
             normalized_critic_obs = torch.cat((normalized_state_obs, normalized_cube_obs, normalized_depth), dim=-1)
             
+        # -------------------------------- sim2real ------------------------------
+        if self.cfg.store_sim_trajectory:
+            self.state_list.append(actor_obs[:,:10].clone())
+            self.teleop_list.append(actor_obs[:,10:20].clone())
+            self.cube_list.append(actor_obs[:,20:].clone())
+            if self.cfg.enable_vision:
+                self.depth_list.append(depth_filtered.detach().cpu().numpy().reshape(120,120))
+
+        if self.cfg.use_privilege_obs and self.cfg.enable_vision:
             return {"policy": torch.clamp(normalized_actor_obs, -1.0, 1.0),
                     "critic": torch.clamp(normalized_critic_obs, -1.0, 1.0)}
-        
-        # self.check_obs_bounds(normalized_actor_obs, threshold=1.0, tol=1e-5)
-        # print("ee pos: ", self.ee_pos)
-        # print("teleop pos: ", self.teleop_pos) # TODO: initial misalignment
-        # print("cube pos: ", self.cube_pos)
-
-        return {"policy": torch.clamp(normalized_actor_obs, -1.0, 1.0)}
+        else:
+            return {"policy": torch.clamp(normalized_actor_obs, -1.0, 1.0)}
 
     def check_obs_bounds(self, obs: torch.Tensor, threshold: float = 1.0, tol: float = 1e-5):
         """
@@ -509,8 +539,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
             env_ids, dim_ids = torch.where(mask)
             for env, dim in zip(env_ids.tolist(), dim_ids.tolist()):
                 print(f"Env {env}, Obs dim {dim}, Value: {obs[env, dim].item():.6f}")
-
-            import pdb; pdb.set_trace()
 
     def _print_training_info(self):
         print(f"Loading data from {self.cfg.training_data_path} \n")
@@ -544,8 +572,8 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
         # self.robot_position_upper_limits = torch.tensor([[0.65, 0.5, 0.5]], device=self.device)
         # self.robot_position_lower_limits = torch.tensor([[0.15, -0.5, 0.18]], device=self.device)
-        self.finger_offset_ee_fr = torch.tensor([[0.0, 0.0, 0.155]], device=self.device).repeat(self.num_envs, 1)
-        self.gripper_base_offset_ee_fr = torch.tensor([[0.0, 0.0, -0.04]], device=self.device).repeat(self.num_envs, 1)
+        self.finger_offset_ee_fr = torch.tensor([[0.0, 0.0, 0.16]], device=self.device).repeat(self.num_envs, 1) # const distance between gripper and ee
+        self.gripper_base_offset_ee_fr = torch.tensor([[0.0, 0.0, -0.034]], device=self.device).repeat(self.num_envs, 1) # offset between sim ee and real ee
 
         self.num_eff_joints = 8#self._robot.num_joints - 5
         self.robot_dof_targets = torch.zeros((self.num_envs, self.num_eff_joints), device=self.device)
@@ -558,7 +586,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
         else: 
             self.demo_idx = torch.randint(
                                 low=0,
-                                high=self.cfg.num_demos,
+                                high=1,#self.cfg.num_demos,
                                 size=(self.num_envs,),
                                 device=self.device,
                                 dtype=torch.long,
@@ -590,6 +618,15 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.state_obs_normalizer = ActionNormalizer(obs_low, obs_high)
 
         self.fingertip_goal_10D = self.init_10D_pose.clone() # (num_envs, 10)
+
+        if self.cfg.store_sim_trajectory:
+            assert self.num_envs == 1, "Storing observations only works for 1 env"
+            self.state_list = []
+            self.teleop_list = []
+            self.cube_list = []
+            self.depth_list = [] # NOTE: depth list is stored as np arrays
+
+            self.residual_list = []
 
     def _init_markers(self):
         frame_marker_cfg = copy.deepcopy(FRAME_MARKER_CFG)
@@ -649,7 +686,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
             tuple: ee_pos, ee_orn_quat, ee_orn_6D, finger_status
         """
         # ee and root pose in world frame
-        ee_pose_w = self._robot.data.body_com_state_w[:,7,:]
+        ee_pose_w = self._robot.data.body_com_state_w[:,7,:].clone()
         ee_pose_w[:,:3] = ee_pose_w[:,:3] + tf_vector(ee_pose_w[:,3:7], self.gripper_base_offset_ee_fr)
         
         root_pose_w = self._robot.data.root_state_w[:]
@@ -707,7 +744,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
         controller.set_command(ik_commands)
         
         ee_jacobi_idx = self._robot.find_bodies("link7")[0][0]-1 # or link7?
-        # import pdb; pdb.set_trace()
         jacobian = self._robot.root_physx_view.get_jacobians()[:,ee_jacobi_idx,:, self.joint_ids[:7]] #(num_envs, 6, 7)
         joint_pos = self._robot.data.joint_pos[:,self.joint_ids[:7]] # (num_envs, 7)
 
@@ -751,7 +787,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
     def _step_sim_no_action(self):
         """Step the simulation without an action. Used for resets."""
         self.scene.write_data_to_sim()
-        self.sim.step(render=False)
+        # self.sim.step(render=False)
         self.scene.update(dt=self.physics_dt)
         self._compute_intermediate_values()
 
@@ -788,9 +824,10 @@ class XArmCubeResidualEnv(DirectRLEnv):
             self._robot.write_joint_damping_to_sim(randomized_damping, [0,1,2,3,4,5,6], env_ids=env_ids)
         
         self._robot.set_joint_position_target(joint_pos, env_ids=env_ids)
+        self._robot.set_joint_effort_target(joint_effort, env_ids=env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
         self._robot.reset(env_ids=env_ids)
-        self._robot.set_joint_effort_target(joint_effort, env_ids=env_ids)
+        
 
     def _reset_assets(self, env_ids, apply_dmr=False):
         cube_root = self._cube.data.default_root_state.clone()
@@ -810,24 +847,14 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self._cube.write_root_state_to_sim(root_state=cube_root, env_ids=env_ids) #NOTE: no render on reset
         self._cube.reset(env_ids)
 
-    def _reset_buffers(self, env_ids):
+    def _reset_buffers(self, env_ids, augment_data = False):
         # Reset time step
         self.time_step_per_env[env_ids] = 0
 
         # Reset demo idx
         self.demo_idx[env_ids] = (self.demo_idx[env_ids] + 1) % self.cfg.num_demos 
 
-    def _reset_demo_traj(self, env_ids, add_noise=True):
-        # # update initial pose of demo trajs
-        # ee after dmr
-        initial_ee = self.get_robot_ee_10D_b().clone()
-        # interpolated from randomized ee to demo traj            
-        initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.demo_traj[env_ids, self.demo_idx[env_ids], 20, :], 20) # (env_ids, 1, 50, 10)
-        # fill in initial traj
-        self.demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
-        
-        # add noise to demo traj
-        if not add_noise:
+        if not augment_data:
             self.training_demo_traj = self.demo_traj
         else:
             step_interval = int(torch.randint(20, 41, (1,)).item())
@@ -838,8 +865,13 @@ class XArmCubeResidualEnv(DirectRLEnv):
                                                                         step_interval=step_interval, 
                                                                         noise_level=pos_noise, 
                                                                         beta=beta_filter) # ee traj
-            
 
-        # clear obs buffers
-        # self.teleop_10D[env_ids,:] = self.training_demo_traj[env_ids, self.demo_idx[env_ids], 0, :]
+    def _update_training_traj(self, env_ids, add_noise=True):
+        # # update initial pose of demo trajs
+        # ee after dmr
+        initial_ee = self.teleop_10D.clone() # (num_envs, 10)
+        # interpolated from randomized ee to demo traj            
+        initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.training_demo_traj[env_ids, self.demo_idx[env_ids], 20, :], 20) # (env_ids, 1, 50, 10)
+        # fill in initial traj
+        self.training_demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
 
