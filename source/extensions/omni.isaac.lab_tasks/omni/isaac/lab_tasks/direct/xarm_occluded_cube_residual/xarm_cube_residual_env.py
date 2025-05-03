@@ -66,20 +66,20 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
-            static_friction=1.5,
-            dynamic_friction=1.5,
+            static_friction=1.0,
+            dynamic_friction=1.0,
             restitution=0.0,
         ),
         physx=PhysxCfg(
             solver_type=1,
-            max_position_iteration_count=192,  # Important to avoid interpenetration.
+            max_position_iteration_count=12,  # Important to avoid interpenetration.
             max_velocity_iteration_count=1,
-            bounce_threshold_velocity=0.2,
-            friction_offset_threshold=0.01,
-            friction_correlation_distance=0.00625,
-            gpu_max_rigid_contact_count=2**23,
-            gpu_max_rigid_patch_count=2**23,
-            gpu_max_num_partitions=1,  # Important for stable simulation.
+            # bounce_threshold_velocity=0.2,
+            # friction_offset_threshold=0.01,
+            # friction_correlation_distance=0.00625,
+            # gpu_max_rigid_contact_count=2**23,
+            # gpu_max_rigid_patch_count=2**23,
+            gpu_max_num_partitions=1,  # Important for stable simulation. # NOTE: THIS IS IMPORTANT 
         ),
     )
 
@@ -95,14 +95,14 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
                 max_depenetration_velocity=5.0,
-                linear_damping=0.0,
-                angular_damping=0.0,
-                max_linear_velocity=1000.0,
-                max_angular_velocity=3666.0,
-                enable_gyroscopic_forces=True,
-                solver_position_iteration_count=16,
-                solver_velocity_iteration_count=1,
-                max_contact_impulse=1e32,
+                # linear_damping=0.0,
+                # angular_damping=0.0,
+                # max_linear_velocity=1000.0,
+                # max_angular_velocity=3666.0,
+                # enable_gyroscopic_forces=True,
+                # solver_position_iteration_count=16,
+                # solver_velocity_iteration_count=1,
+                # max_contact_impulse=1e32,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                 enabled_self_collisions=False,      # TODO: check if this caused the problem 
@@ -110,7 +110,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
                 solver_velocity_iteration_count=1
             ),
             joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="acceleration"),                # TODO: check difference force vs acc   
-            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+            # collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
         ), 
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={ # TODO: change to the initial pose corresponding to teleop initial EE
@@ -161,11 +161,11 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
                 usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd", 
                 scale=(0.7, 0.7, 0.7),
                 rigid_props=RigidBodyPropertiesCfg(
-                    solver_position_iteration_count=8,
-                    solver_velocity_iteration_count=0,
+                    solver_position_iteration_count=12,
+                    solver_velocity_iteration_count=1,
                     max_angular_velocity=1000.0,
                     max_linear_velocity=1000.0,
-                    max_depenetration_velocity=1000.0,
+                    max_depenetration_velocity=5.0,
                     disable_gravity=False,
                     # enable_gyroscopic_forces=True,
                 ),
@@ -311,10 +311,10 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
 
         # # filter finger collision # TODO debug gripper
-        self._create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_outer_knuckle")
-        self._create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_outer_knuckle")
-        self._create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_finger")
-        self._create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_finger")
+        # self._create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_outer_knuckle")
+        # self._create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_outer_knuckle")
+        # self._create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_finger")
+        # self._create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_finger")
 
         # clone, filter, and replicate
         self.scene.clone_environments(copy_from_source=False) 
@@ -630,12 +630,12 @@ class XArmCubeResidualEnv(DirectRLEnv):
         
         return selected_actions
 
-    def _create_filter_pairs(self, prim1: str, prim2: str):
-        stage = get_current_stage()
-        filteredpairs_api = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(prim1)) # type: ignore
-        filteredpairs_rel = filteredpairs_api.CreateFilteredPairsRel()
-        filteredpairs_rel.AddTarget(prim2)
-        stage.Save()
+    # def _create_filter_pairs(self, prim1: str, prim2: str):
+    #     stage = get_current_stage()
+    #     filteredpairs_api = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(prim1)) # type: ignore
+    #     filteredpairs_rel = filteredpairs_api.CreateFilteredPairsRel()
+    #     filteredpairs_rel.AddTarget(prim2)
+    #     stage.Save()
 
     def get_fingertip_obs(self):
         """
