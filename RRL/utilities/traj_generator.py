@@ -717,7 +717,7 @@ def add_correlated_noise_vectorized(
     beta: float
 ) -> torch.Tensor:
     """
-    trajectories: (E, D, T, 10)   # 3 pos + 6 ori + 1 grip
+    trajectories: (E, D, T, 10)  # 3 pos + 6 ori + 1 grip
     env_ids:      (K,)           # which envs to perturb
     step_interval: int           # spacing between noise nodes
     noise_level:  float          # std dev of raw Gaussian noise

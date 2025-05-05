@@ -1,99 +1,105 @@
 import torch
 
 class HistoryBuffer:
-    def __init__(self, num_envs: int, history_length: int = 10, state_dim: int = 10, device: str = 'cuda:0'):
+    def __init__(self,
+                 num_envs: int,
+                 hist_length: int,
+                 state_dim: int,
+                 num_samples: int,
+                 sample_spacing: int,
+                 device: str = 'cuda:0'):
         """
-        Initialize a history buffer as a preallocated tensor of shape (num_envs, history_length, state_dim).
-        
+        A circular buffer storing the last `hist_length` observations per environment.
+
         Args:
-            num_envs (int): Number of environments.
-            history_length (int): Maximum number of states to store (default 10).
-            state_dim (int): Dimensionality of each state (default 10).
-            device (torch.device): Device on which to allocate the tensor (defaults to CPU if not provided).
+            num_envs (int): Number of parallel environments.
+            hist_length (int): Maximum history length per environment.
+            state_dim (int): Dimensionality of each observation.
+            num_samples (int): Number of samples to retrieve in get_history.
+            sample_spacing (int): Step spacing between samples.
+            device (str): Torch device for storage.
         """
-        if device is None:
-            device = torch.device("cpu")
         self.num_envs = num_envs
-        self.history_length = history_length
+        self.hist_length = hist_length
         self.state_dim = state_dim
+        self.num_samples = num_samples
+        self.sample_spacing = sample_spacing
         self.device = device
 
-        # Preallocate a buffer: shape (num_envs, history_length, state_dim)
-        self.buffer = torch.zeros(num_envs, history_length, state_dim, device=device)
-        # Pointer to next insertion per environment: shape (num_envs,)
+        assert hist_length >= (num_samples - 1) * sample_spacing + 1, (
+            f"hist_length must be at least {(num_samples - 1) * sample_spacing + 1} "
+            f"to support num_samples={num_samples}, sample_spacing={sample_spacing}")
+
+        # buffer shape: (num_envs, hist_length, state_dim)
+        self.buffer = torch.zeros(num_envs, hist_length, state_dim, device=device)
+        # pointer for next write per env
         self.ptr = torch.zeros(num_envs, dtype=torch.long, device=device)
-        # Count of inserted items per environment: shape (num_envs,)
-        self.count = torch.zeros(num_envs, dtype=torch.long, device=device)
 
     def append(self, obs: torch.Tensor):
         """
-        Append new observations to the buffer for each environment.
-        If the buffer is full for an environment, the oldest observation is overwritten.
-        
-        Args:
-            obs (torch.Tensor): New observations of shape (num_envs, state_dim).
-        """
-        # Create indices for environments: shape (num_envs,)
-        env_indices = torch.arange(self.num_envs, device=self.device)
-        # Insert the new observation at the current pointer location for each environment.
-        self.buffer[env_indices, self.ptr] = obs
-        # Update pointer in circular fashion.
-        self.ptr = (self.ptr + 1) % self.history_length
-        # Update count per environment; cap the count at history_length.
-        self.count = torch.clamp(self.count + 1, max=self.history_length)
+        Append a new observation for each environment.
 
-    def is_full(self) -> torch.Tensor:
+        Args:
+            obs (torch.Tensor): Shape (num_envs, state_dim).
         """
-        Check whether the history buffer is full for each environment.
-        
-        Returns:
-            torch.Tensor: Boolean tensor of shape (num_envs,) where True indicates that
-                          the corresponding environment's buffer is full.
-        """
-        return self.count == self.history_length
+        env_ids = torch.arange(self.num_envs, device=self.device)
+        # write obs to current pointers
+        self.buffer[env_ids, self.ptr] = obs
+        # advance pointers
+        self.ptr = (self.ptr + 1) % self.hist_length
 
     def get_history(self) -> torch.Tensor:
         """
-        Retrieve the history for each environment in time order (oldest to newest).
-        This rearranges the circular buffer so that the oldest observation comes first.
-        
-        Returns:
-            torch.Tensor: History tensor of shape (num_envs, history_length, state_dim)
+        Get the most recent `num_samples` observations spaced by `sample_spacing`.
+        Returns a flat tensor of shape (num_envs, num_samples * state_dim).
+        Order: [obs_t, obs_t-m, obs_t-2m, ...]
         """
-        # The pointer indicates where the next element will be inserted,
-        # so it also indicates the position of the oldest element.
-        idx = (self.ptr.unsqueeze(1) + torch.arange(self.history_length, device=self.device).unsqueeze(0)) % self.history_length
-        ordered_history = torch.gather(self.buffer, 1, idx.unsqueeze(-1).expand(-1, -1, self.state_dim))
-        return ordered_history
+        # compute offsets: [0, sample_spacing, 2*sample_spacing, ...]
+        offsets = torch.arange(self.num_samples, device=self.device) * self.sample_spacing
+        # last-written index per env: ptr - 1 mod hist_length
+        last_idx = (self.ptr - 1) % self.hist_length
+        # compute indices for each sample: shape (num_envs, num_samples)
+        idx = (last_idx.unsqueeze(1) - offsets.unsqueeze(0)) % self.hist_length
+        env_ids = torch.arange(self.num_envs, device=self.device).unsqueeze(1)
+        # gather and flatten
+        samples = self.buffer[env_ids, idx]  # (num_envs, num_samples, state_dim)
+        return samples.reshape(self.num_envs, self.num_samples * self.state_dim)
 
     def clear_envs(self, env_ids):
         """
-        Clear the history for the specified environments by resetting their buffers, pointers, and counts.
-        
+        Clear buffer contents for given environments.
+
         Args:
-            env_ids (list or torch.Tensor): Indices of environments to clear.
+            env_ids (list or torch.Tensor): Environment indices to clear.
         """
-        # Convert env_ids to a tensor if it isn't already.
         if not isinstance(env_ids, torch.Tensor):
             env_ids = torch.tensor(env_ids, dtype=torch.long, device=self.device)
-        # Reset the buffer for these environments.
+        # zero out buffer and reset pointers
         self.buffer[env_ids] = 0
-        # Reset the insertion pointer and count.
         self.ptr[env_ids] = 0
-        self.count[env_ids] = 0
 
-    def get_oldest_obs(self) -> torch.Tensor:
+    def initialize(self, initial_obs: torch.Tensor, env_ids=None):
         """
-        Get a copy of the oldest observation from each environment's buffer without removing it.
-        If the buffer is not yet full, the oldest observation is assumed to be at index 0.
-        Otherwise, when the buffer is full, the oldest observation is at index indicated by the pointer.
-        
-        Returns:
-            torch.Tensor: Oldest observations for each environment, shape (num_envs, state_dim).
+        Fill history with a given observation for select environments.
+
+        Args:
+            initial_obs (torch.Tensor): Shape (state_dim,) or (N, state_dim).
+            env_ids (list or torch.Tensor, optional): Envs to init; defaults to all.
         """
-        # For each environment, if the count is less than history_length, then the oldest
-        # observation is at index 0. Otherwise, the oldest is at index `ptr`.
-        oldest_idx = torch.where(self.count < self.history_length, torch.zeros_like(self.ptr), self.ptr)
-        env_indices = torch.arange(self.num_envs, device=self.device)
-        oldest_obs = self.buffer[env_indices, oldest_idx]
-        return oldest_obs
+        # determine target envs
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        elif not isinstance(env_ids, torch.Tensor):
+            env_ids = torch.tensor(env_ids, dtype=torch.long, device=self.device)
+
+        # broadcast if needed
+        if initial_obs.dim() == 1:
+            assert initial_obs.shape[0] == self.state_dim, (
+                f"Expected shape ({self.state_dim},), got {initial_obs.shape}")
+            initial_obs = initial_obs.unsqueeze(0).expand(len(env_ids), -1)
+        assert initial_obs.shape == (len(env_ids), self.state_dim), (
+            f"Expected shape ({len(env_ids)}, {self.state_dim}), got {initial_obs.shape}")
+
+        # fill buffer and reset pointers
+        self.buffer[env_ids] = initial_obs.unsqueeze(1).expand(-1, self.hist_length, -1)
+        self.ptr[env_ids] = 0

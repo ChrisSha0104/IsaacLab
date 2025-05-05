@@ -175,15 +175,18 @@ class RslRlVecEnvWrapper(VecEnv):
     def step(self, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         # record step information
         obs_dict, rew, terminated, truncated, extras = self.env.step(actions)
+
         # compute dones for compatibility with RSL-RL
         dones = (terminated | truncated).to(dtype=torch.long)
+
         # move extra observations to the extras dict
         obs = obs_dict["policy"]
         extras["observations"] = obs_dict
         # move time out information to the extras dict
         # this is only needed for infinite horizon tasks
-        if not self.unwrapped.cfg.is_finite_horizon:
-            extras["time_outs"] = truncated
+        if not self.unwrapped.cfg.is_finite_horizon: # NOTE: evaluates to true for residual policy
+            success = extras.get("success", False)
+            extras["time_outs"] = (truncated & (~success)).float()
 
         # return the step information
         return obs, rew, dones, extras

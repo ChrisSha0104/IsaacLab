@@ -21,9 +21,9 @@
 
 ###NEW CUBE###
 
-# STATEBASED!!!
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-State-v0 --enable_cameras --num_envs 16 --load_run 2025-05-01_21-20-21_reduced_residual_scale_lowered_fingertip_inst_rew --checkpoint model_720
+# STATEBASED!!! 
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-State-v0 --num_envs 16 --load_run 5-5_STATE_asym_hist54_early_term_DMR
 
 
 # VISION!!!
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --num_envs 16 --load_run 2025-05-02_00-57-12_vision_retry #--checkpoint model_500
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --num_envs 16 --load_run 2025-05-05_00-26-00_vision_ts4_hist54_DMR --checkpoint model_600

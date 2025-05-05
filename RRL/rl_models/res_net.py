@@ -94,104 +94,52 @@ class CNNEncoder(nn.Module):
         x = self.fc(x)
         return x
 
+import torch
+import torch.nn as nn
+import torchvision.models as models
+from torchvision.models import ResNet18_Weights
+
+# TODO: reduce input size to 96*96 or 84*84
+
 class ResNetDepthEncoder(nn.Module):
-    def __init__(self, 
-                 output_dim=128, 
-                 pretrained=True):
+    def __init__(self, output_dim=128, pretrained=True):
         super().__init__()
-        resnet = vision_models.resnet18(pretrained=pretrained)
-        resnet.conv1 = nn.Conv2d(
-            in_channels=1, out_channels=64,
-            kernel_size=7, stride=2, padding=3, bias=False
+        self.backbone = models.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
+
+        # Adapt the first conv layer for 1-channel input
+        orig_conv1 = self.backbone.conv1
+        self.backbone.conv1 = nn.Conv2d(
+            1, orig_conv1.out_channels,
+            kernel_size=orig_conv1.kernel_size,
+            stride=orig_conv1.stride,
+            padding=orig_conv1.padding,
+            bias=orig_conv1.bias
         )
-        self.encoder = nn.Sequential(
-            resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool,
-            resnet.layer1, resnet.layer2, resnet.layer3, resnet.layer4,
-            nn.AdaptiveAvgPool2d((1,1)), nn.Flatten(),
-            nn.Linear(512, output_dim),
-        )
+        if pretrained:
+            with torch.no_grad():
+                self.backbone.conv1.weight[:] = orig_conv1.weight.mean(dim=1, keepdim=True)
 
-    def forward(self, depth_img):
-        # depth_img: (B, 120*120) with values in [0,1]
-        B = depth_img.shape[0]
-        x = depth_img.view(B, 1, 120, 120)   # ← reshape into (B,1,H,W)
-        return self.encoder(x)
-    
+        for name, param in self.backbone.named_parameters():
+            if "layer3" not in name and "layer4" not in name:
+                param.requires_grad = False
 
+        # Save the original in_features before replacing fc
+        in_features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Identity()
 
+        # Project to 128D
+        self.project = nn.Linear(in_features, output_dim)
 
-class ResNet18Conv(ConvBase):
-    """
-    A ResNet18 block that can be used to process input images.
-    """
-    def __init__(
-        self,
-        input_channel=3,
-        pretrained=False,
-        input_coord_conv=False,
-        mlp_input_dim=512*3*3,
-        mlp_output_dim=128,
-    ):
-        """
-        Args:
-            input_channel (int): number of input channels for input images to the network.
-                If not equal to 3, modifies first conv layer in ResNet to handle the number
-                of input channels.
-            pretrained (bool): if True, load pretrained weights for all ResNet layers.
-            input_coord_conv (bool): if True, use a coordinate convolution for the first layer
-                (a convolution where input channels are modified to encode spatial pixel location)
-        """
-        super(ResNet18Conv, self).__init__()
-        net = vision_models.resnet18(pretrained=True)
-
-        if input_coord_conv:
-            net.conv1 = CoordConv2d(input_channel, 64, kernel_size=7, stride=2, padding=3, bias=False) 
-        elif input_channel != 3:
-            net.conv1 = nn.Conv2d(input_channel, 64, kernel_size=7, stride=2, padding=3, bias=False)
-
-        # cut the last fc layer
-        self._input_coord_conv = input_coord_conv
-        self._input_channel = input_channel
-        self.nets = torch.nn.Sequential(*(list(net.children())[:-2]))
-        self.mlp_output_dim = mlp_output_dim
-
-        # # Define an MLP to reduce dimensions
-        self.mlp = nn.Sequential(
-            nn.Flatten(),  # Flatten the spatial dimensions (B, C, H, W) → (B, C*H*W), i.e., (num_envs, 512*3*3)
-            nn.Linear(mlp_input_dim, 1024),
-            nn.ReLU(),  # Activation
-            nn.Linear(1024,512),
-            nn.ReLU(),
-            nn.Linear(512, mlp_output_dim)  # Reduce to desired output dimension
-        )
-
-    def forward(self, x): 
-        """
-        Forward pass through the encoder and the MLP.
-        """
-        features = self.nets(x)
-        reduced_features = self.mlp(features)
-        return reduced_features
+        self.dropout = nn.Dropout(p=0.3)
 
 
-    # def output_shape(self, input_shape):
-    #     """
-    #     Function to compute output shape from inputs to this module. 
+    def forward(self, depth_image):
+        features = self.backbone(depth_image)         # [B, 512]
+        embedding = self.project(self.dropout(features))            # [B, 128]
+        
+        return embedding
 
-    #     Args:
-    #         input_shape (iterable of int): shape of input. Does not include batch dimension.
-    #             Some modules may not need this argument, if their output does not depend 
-    #             on the size of the input, or if they assume fixed size input.
 
-    #     Returns:
-    #         out_shape ([int]): list of integers corresponding to output shape
-    #     """
-    #     assert(len(input_shape) == 3)
-    #     out_h = int(math.ceil(input_shape[1] / 32.))
-    #     out_w = int(math.ceil(input_shape[2] / 32.))
-    #     return [512, out_h, out_w]
-
-    def __repr__(self):
-        """Pretty print network."""
-        header = '{}'.format(str(self.__class__.__name__))
-        return header + '(input_channel={}, input_coord_conv={})'.format(self._input_channel, self._input_coord_conv)
+def freeze_encoder(encoder):
+    for param in encoder.backbone.parameters():
+        param.requires_grad = False

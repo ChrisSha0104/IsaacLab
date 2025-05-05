@@ -29,7 +29,7 @@
 
 ### new cube ###
 # VISION
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --headless --num_envs 512 --run_name vision_initial_train --max_iterations 5000
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --headless --num_envs 256 --run_name vision_ts4_hist54_DMR --max_iterations 5000 #TODO: change to 512
 
 # STATEBASED
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-State-v0  --headless --num_envs 2048 --run_name state_fixed_offset_reset --max_iterations 5000
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-State-v0  --num_envs 10 --headless --run_name state_traingset4_hist_early_success_DMR_54 --max_iterations 5000

@@ -172,18 +172,17 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
                 # mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
             ),
         )   
-
     # cameras
     camera = TiledCameraCfg(
-        prim_path="/World/envs/env_.*/Robot/link7/cam", # TODO: TUNE OFFSET # TODO: ADD NOISE
-        offset=TiledCameraCfg.OffsetCfg(pos=(0.13, 0.0, 0.008), rot=(0.9744,0,-0.2334,0), convention="ros"), # z-down; x-forward
+        prim_path="/World/envs/env_.*/Robot/link7/cam", # TODO: ADD NOISE
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.125, 0.0, 0.008), rot=(0.96815, 0.0, -0.25038, 0.0), convention="ros"), # z-down; x-forward # greater angle = towards gripper
         height=120,
         width=120,
         data_types=[
             "distance_to_image_plane",
             ],
-        spawn=sim_utils.PinholeCameraCfg( # TODO: TUNE CAMERA PARAMETERS
-            focal_length=21.315, focus_distance=400.0, horizontal_aperture=24, clipping_range=(0.01, 20) # NOTE: unit in cm
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=733/6/100, focus_distance=400.0, horizontal_aperture=120/100, clipping_range=(0.01, 20) # NOTE: unit in cm
         ),
     )
 
@@ -202,45 +201,53 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     )
 
     # -------- training options -------- 
-    training_data_path = "RRL/tasks/cube/training_set3"
-    enable_vision = False
-    enable_residual = False
-    use_privilege_obs = False
-    apply_dmr = False
-    augment_real_data = False
+    training_data_path = "RRL/tasks/cube/training_set4"
+    enable_vision = True
+    enable_residual = True
+    use_privilege_obs = True 
+    apply_dmr = True           
+    augment_real_data = True
 
     # -------- training params --------
     traj_length = 400
-    num_demos = 1
-    alpha = 0.1 # residual scale
-    tilde = 1.0 # low pass filter
+    num_demos = 50
+    alpha = 0.25    # residual scale
+    tilde = 1.0     # low pass filter
+    num_samples = 5 # number of teleop samples to be used for training
+    sample_interval = 4 # sample interval for teleop samples # TODO: increase to 5
 
     # -------- initialization --------
-    fingertip_init_pose_10D = [0.2568, 0.005,  0.4005, # unit: m # NOTE: initial fingertip pose in sim & real
+    fingertip_init_pose_10D = [0.2568, 0.005,  0.245, # unit: m         # NOTE: initial fingertip pose in sim & real
                                 1.00, 0.00, 0.00, 0.00, -1.00, 0.00, 
-                                0.00]                               # TODO: change gripper to -1 and 1
+                                -1.00]                                  # NOTE: 1 = open, -1 = close
     fingertip_lower_limit = [0.15, -0.4, 0.03, 
-                          -1.05, -1.05, -1.05, -1.05, -1.05, -1.05, 
-                          -1.0]
-    fingertip_upper_limit = [0.55, 0.4, 0.5, 
-                          1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 
-                          1.0]
-    cube_lower_limit = [0.15, -0.3, 0.0, 
+                            -1.05, -1.05, -1.05, -1.05, -1.05, -1.05, 
+                            -1.0]
+    fingertip_upper_limit = [0.65, 0.4, 0.5, 
+                            1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 
+                            1.0]
+    cube_lower_limit = [0.25, -0.2, 0.0, 
                         -1.05, -1.05, -1.05, -1.05, -1.05, -1.05]
-    cube_upper_limit = [0.55, 0.3, 0.5, 
-                        1.15, 1.15, 1.15, 1.15, 1.15, 1.15]
-    obs_lower_limit = fingertip_lower_limit + fingertip_lower_limit + cube_lower_limit
-    obs_upper_limit = fingertip_upper_limit + fingertip_upper_limit + cube_upper_limit
+    cube_upper_limit = [0.55, 0.2, 0.4, 
+                        1.05, 1.05, 1.05, 1.05, 1.05, 1.05]
+    state_obs_lower_limit = fingertip_lower_limit * (num_samples+1) 
+    state_obs_upper_limit = fingertip_upper_limit * (num_samples+1) 
     minimum_height= 0.1
 
+    privilege_obs_lower_limit = [0.0, # fingertip cube dist
+                                 0.0, # episode length
+                                 0.0, # demo idx
+                                 0.0] # reached cube
+    privilege_obs_upper_limit = [1.0, 400.0, float(num_demos), 1.0]
+
     # -------- visualization options -------- 
-    show_camera = True
-    debug_intermediate_values = True
+    show_camera = False
+    debug_intermediate_values = False   
     order_demos = False
 
     # -------- sim2real options -------- 
     store_sim_trajectory = False
-    storing_path = "RRL/tasks/cube/sim2real/traj1"
+    storing_path = "RRL/tasks/cube/sim2real/traj3"
 
     # -------- rewards --------
     completion_reward_scale = 1.0
@@ -277,7 +284,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.ee_pos = self.fingertip_pos[:,:3].clone() + tf_vector(self.fingertip_quat, -1*self.fingertip2ee_offset_sim) 
 
         # teleop commands
-        self.teleop_fingertip_pos, self.teleop_fingertip_quat, self.teleop_fingertip_orn_6D, self.teleop_gripper_binary = self.get_teleop_state_info_b()
+        self.teleop_fingertip_pos, self.teleop_fingertip_quat, self.teleop_fingertip_orn_6D, self.teleop_gripper_binary = self.get_teleop_fingertip_comm()
         self.teleop_fingertip_10D = torch.cat((self.teleop_fingertip_pos, self.teleop_fingertip_orn_6D, self.teleop_gripper_binary), dim=-1) # (num_envs, 10)
         self.teleop_pos = self.teleop_fingertip_pos[:,:3].clone() + tf_vector(self.teleop_fingertip_quat, -1*self.fingertip2ee_offset_sim) # (num_envs, 3)
 
@@ -310,12 +317,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
 
-        # # filter finger collision # TODO debug gripper
-        # self._create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_outer_knuckle")
-        # self._create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_outer_knuckle")
-        # self._create_filter_pairs("/World/envs/env_0/Robot/right_inner_knuckle", "/World/envs/env_0/Robot/right_finger")
-        # self._create_filter_pairs("/World/envs/env_0/Robot/left_inner_knuckle", "/World/envs/env_0/Robot/left_finger")
-
         # clone, filter, and replicate
         self.scene.clone_environments(copy_from_source=False) 
         self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
@@ -327,25 +328,25 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
     # pre-physics step calls
     def _pre_physics_step(self, noutput: torch.Tensor):
-        n_residual_10D = noutput.clone()[:,:10]
+        self.n_residual_10D = noutput.clone()[:,:10]
 
         if self.cfg.store_sim_trajectory:
-            self.residual_list.append(n_residual_10D.clone())
-
-        # TODO: autonomy_param = noutput.clone()[:,-1:] # TODO: check if 10 dim is better
+            self.residual_list.append(self.n_residual_10D.clone())
 
         self.last_fingertip_goal_10D = self.fingertip_goal_10D.clone() # last fingertip action
 
         if self.cfg.enable_residual:
             nbase = self.action_normalizer.normalize(self.teleop_fingertip_10D.clone())
-            n_fingertip_goal_10D = nbase + self.cfg.alpha * n_residual_10D
-            self.fingertip_goal_10D = self.action_normalizer.denormalize(n_fingertip_goal_10D.clone()) # negative finger goal!!!!
+            n_fingertip_goal_10D = nbase + self.cfg.alpha * self.n_residual_10D.clone()
+            self.fingertip_goal_10D = self.action_normalizer.denormalize(n_fingertip_goal_10D.clone()) 
         else: 
             self.fingertip_goal_10D = self.teleop_fingertip_10D.clone()
 
         fingertip_goal_10D_filtered = self.cfg.tilde * self.fingertip_goal_10D.clone() + (1-self.cfg.tilde) * self.last_fingertip_goal_10D.clone()
         fingertip_goal_10D_filtered[:,:3] = torch.clamp(fingertip_goal_10D_filtered[:,:3], self.action_low[:,:3], self.action_high[:,:3])
-        fingertip_goal_10D_filtered[:,-1] = (fingertip_goal_10D_filtered[:,-1] > 0.5).float() # TODO: change to -1,1, i,e gripper > 0
+        fingertip_goal_10D_filtered[:,-1] = torch.where(fingertip_goal_10D_filtered[:, -1] > 0.0, 
+                                                        torch.tensor(1.0, device=fingertip_goal_10D_filtered.device),  # closed
+                                                        torch.tensor(-1.0, device=fingertip_goal_10D_filtered.device)) # open
 
         self.joint_pos = self.get_qpos_from_fingertip_10d(self.diff_ik_controller, fingertip_goal_10D_filtered, apply_smoothing=True)                                  # ee_goal always abs coordinates
         self.robot_dof_targets[:] = torch.clamp(self.joint_pos, self.qpos_lower_limits[:8], self.qpos_upper_limits[:8])       # (num_envs, 8)
@@ -364,27 +365,35 @@ class XArmCubeResidualEnv(DirectRLEnv):
     # post-physics step calls 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self._compute_intermediate_values()
+        success = (self.cube_pos[:,2] > self.cfg.minimum_height)
+        self.extras["success"] = success
+
         terminated = self.fingertip_pos[:,2] < 0.02
+        terminated |= success
 
         truncated = self.episode_length_buf >= self.max_episode_length - 1
 
+        done = terminated | truncated | success
+        self.episode_count += (done).long()
+        self.success_count += (success).long()
+
         if self.cfg.store_sim_trajectory:
-            if len(self.state_list) == self.traj_length + 2:
+            if len(self.state_list) == self.traj_length + 1:
                 os.makedirs(self.cfg.storing_path, exist_ok=True)
                 state_tensor = torch.stack(self.state_list, dim=0).reshape(-1, 10)
-                torch.save(state_tensor[2:], os.path.join(self.cfg.storing_path, "sim_state_obs.pt"))
+                torch.save(state_tensor[1:], os.path.join(self.cfg.storing_path, "sim_state_obs.pt"))
                 teleop_tensor = torch.stack(self.teleop_list, dim=0).reshape(-1, 10)
-                torch.save(teleop_tensor[2:], os.path.join(self.cfg.storing_path, "sim_teleop_obs.pt"))
+                torch.save(teleop_tensor[1:], os.path.join(self.cfg.storing_path, "sim_teleop_obs.pt"))
                 cube_tensor = torch.stack(self.cube_list, dim=0).reshape(-1, 9)
-                torch.save(cube_tensor[2:], os.path.join(self.cfg.storing_path, "sim_cube_obs.pt"))
+                torch.save(cube_tensor[1:], os.path.join(self.cfg.storing_path, "sim_cube_obs.pt"))
                 residual_tensor = torch.stack(self.residual_list, dim=0).reshape(-1, 10)
                 torch.save(residual_tensor, os.path.join(self.cfg.storing_path, "sim_residual_output.pt"))
                 if self.cfg.enable_vision:
-                    depth_tensor = torch.stack(self.depth_list, dim=0).reshape(-1, 120*120)
-                    np.save(os.path.join(self.cfg.storing_path, "sim_depth_obs.npy"), depth_tensor.detach().cpu().numpy())
-                print(f"init cube pos: {cube_tensor[2, :3]}")
-                print(f"init robot pos: {state_tensor[2]}")
-                print(f"init teleop pos: {teleop_tensor[2]}")
+                    depth_array = np.stack(self.depth_list, axis=0) 
+                    np.save(os.path.join(self.cfg.storing_path, "sim_depth_obs.npy"), depth_array[3:])
+                print(f"init cube pos: {cube_tensor[1, :3]}")
+                print(f"init robot pos: {state_tensor[1]}")
+                print(f"init teleop pos: {teleop_tensor[1]}")
                 print(f"sim data stored at {self.cfg.storing_path}")
                 exit()
 
@@ -395,11 +404,11 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
     def _compute_rewards(self):
         self.fingertip_cube_dist = torch.norm(self.fingertip_pos - self.cube_pos, dim=-1) # (num_envs, )     
-        reached_cube = torch.where((self.fingertip_cube_dist < 0.05)
-                                  & (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) # extend for longer time
-        picked_cube = torch.where((self.cube_pos[:,2] > self.cfg.minimum_height)
-                                  & (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) 
-        completion_reward = reached_cube + 2 * picked_cube
+        reached_cube = torch.where((self.fingertip_cube_dist < 0.05), 1.0, 0.0)
+                                #   & (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) # extend for longer time
+        picked_cube = torch.where((self.cube_pos[:,2] > self.cfg.minimum_height), 1.0, 0.0)
+                                #   & (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) 
+        completion_reward = picked_cube
 
         rewards = (
             self.cfg.completion_reward_scale * completion_reward
@@ -407,12 +416,25 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
         low_finger = torch.where(self.fingertip_pos[:,2] < 0.02, -1.0, 0.0)
 
-        self.extras["log"] = {
+        self.extras["log"] = { # TODO: residual size
             "fingertip_cube_dist": self.fingertip_cube_dist.mean(),
             "reached_cube": reached_cube.mean(),
-            "picked_cube": picked_cube.mean(),
-            "low_finger": low_finger.mean(),
+            "picked_cube": picked_cube.mean() * self.episode_length_buf.float().mean(),
+            "low_finger": low_finger.mean() * self.episode_length_buf.float().mean(),
+            "raw_policy_output_norm": torch.norm(self.n_residual_10D[:,:10], dim=-1).mean(),
+            "teleop_misalignment": torch.norm(self.fingertip_goal_10D - self.teleop_fingertip_10D, dim=-1).mean(),
+
+            # "episode_count": self.episode_count.sum(),
+            # "success_count": self.success_count.sum(),
+            "cummulative_success_rate": self.success_count.sum().float() / self.episode_count.sum().clamp(min=1).float(),
         }
+
+        if self.cfg.debug_intermediate_values and self.episode_count.sum() % self.num_envs == 0:
+            if self.episode_count.sum() > 0:
+                print(f"episode count: {self.episode_count.sum()}")
+                print(f"success count: {self.success_count.sum()}")
+                print(f"overall success rate: {self.success_count.sum().float() / self.episode_count.sum().clamp(min=1).float()}")
+                print(f"failed demos: {self.demo_idx[self.success_count == 0]}")
 
         return rewards
     
@@ -439,17 +461,25 @@ class XArmCubeResidualEnv(DirectRLEnv):
         # recompute / update training traj based on randomized robot state
         self._update_training_traj(env_ids, self.cfg.augment_real_data)
 
+
     def _get_observations(self) -> dict:   
         if self.cfg.enable_vision:
             depth_clean = self._camera.data.output["distance_to_image_plane"].permute(0,3,1,2)
             depth_filtered = filter_sim_depth(depth_clean) # (num_envs, 120*120) which should give same reading as real
-            normalized_depth = normalize_depth_01(depth_filtered)
+            depth_noised = add_noise_in_depth_band(depth_filtered)
+            normalized_depth = normalize_depth_01(depth_noised)
+            # plt.imshow(depth_noised.detach().cpu().numpy().reshape(120,120), cmap='gray')
+            # plt.show()
         
         if self.num_envs == 1 and self.cfg.show_camera and self.cfg.enable_vision:
             depth_vis = filter_depth_for_visualization(depth_filtered.reshape(120,120).detach().cpu().numpy(), unit='m') # only works for 1 env
             cv2.imshow("depth_image", depth_vis)
             cv2.waitKey(1)
             # self.depth_list.append(depth_filtered.detach().cpu().numpy().reshape(120,120))
+
+        self.teleop_hist.append(self.teleop_fingertip_10D.clone())
+        teleop_hist = self.teleop_hist.get_history() # (num_envs, num_samples, 10)
+        num_actor_obs = 10 * (1+self.cfg.num_samples)
         
         if self.cfg.enable_vision:
             actor_obs = torch.cat(
@@ -457,13 +487,11 @@ class XArmCubeResidualEnv(DirectRLEnv):
                     self.fingertip_pos,
                     self.fingertip_orn_6D,
                     self.gripper_binary,
-                    self.teleop_fingertip_pos,
-                    self.teleop_fingertip_orn_6D,
-                    self.teleop_gripper_binary,
+                    teleop_hist,
                 ),
                 dim=-1,
             )
-            normalized_actor_obs = self.double_action_normalizer.normalize(actor_obs)
+            normalized_actor_obs = self.state_obs_normalizer.normalize(actor_obs) # TODO: clean this up !!!!
             normalized_actor_obs = torch.cat((normalized_actor_obs, normalized_depth), dim=-1)
         else:
             actor_obs = torch.cat(
@@ -471,33 +499,42 @@ class XArmCubeResidualEnv(DirectRLEnv):
                     self.fingertip_pos,
                     self.fingertip_orn_6D,
                     self.gripper_binary,
-                    self.teleop_fingertip_pos,
-                    self.teleop_fingertip_orn_6D,
-                    self.teleop_gripper_binary,
+                    teleop_hist,
                     self.cube_pos,
                     self.cube_orn_6D,
                 ),
                 dim=-1,
             )
-            normalized_actor_obs = self.state_obs_normalizer.normalize(actor_obs)
+            normalized_state_obs = self.state_obs_normalizer.normalize(actor_obs[:,:num_actor_obs])
+            normalized_cube_obs = self.cube_normalizer.normalize(actor_obs[:,num_actor_obs:].clone())
+            normalized_actor_obs = torch.cat((normalized_state_obs, normalized_cube_obs), dim=-1)
 
-        if self.cfg.use_privilege_obs and self.cfg.enable_vision:
+        if self.cfg.use_privilege_obs:
+            fingertip_cube_dist = torch.norm(self.fingertip_pos - self.cube_pos, dim=-1)
+            reached_cube = torch.where((fingertip_cube_dist < 0.05), 1.0, 0.0)
             critic_obs = torch.cat(
                 (
                     self.fingertip_pos,
                     self.fingertip_orn_6D,
                     self.gripper_binary,
-                    self.teleop_fingertip_pos,
-                    self.teleop_fingertip_orn_6D,
-                    self.teleop_gripper_binary,
+                    teleop_hist,
                     self.cube_pos,
                     self.cube_orn_6D,
+                    fingertip_cube_dist.unsqueeze(-1),
+                    self.episode_length_buf.float().unsqueeze(-1),
+                    self.demo_idx.float().unsqueeze(-1),
+                    reached_cube.unsqueeze(-1),
                 ),
                 dim=-1,
             )
-            normalized_state_obs = self.double_action_normalizer.normalize(critic_obs[:,:20].clone())
-            normalized_cube_obs = self.cube_normalizer.normalize(critic_obs[:,20:].clone())
-            normalized_critic_obs = torch.cat((normalized_state_obs, normalized_cube_obs, normalized_depth), dim=-1)
+            normalized_base_obs = self.state_obs_normalizer.normalize(critic_obs[:,:num_actor_obs].clone())
+            normalized_cube_obs = self.cube_normalizer.normalize(critic_obs[:,num_actor_obs:-4].clone())
+            normalized_privledge_obs = self.privilege_obs_normalizer.normalize(critic_obs[:,-4:].clone())
+
+            if self.cfg.enable_vision:
+                normalized_critic_obs = torch.cat((normalized_base_obs, normalized_cube_obs, normalized_privledge_obs, normalized_depth), dim=-1)
+            else:
+                normalized_critic_obs = torch.cat((normalized_base_obs, normalized_cube_obs, normalized_privledge_obs), dim=-1)
             
         # -------------------------------- sim2real ------------------------------
         if self.cfg.store_sim_trajectory:
@@ -505,9 +542,9 @@ class XArmCubeResidualEnv(DirectRLEnv):
             self.teleop_list.append(actor_obs[:,10:20].clone())
             self.cube_list.append(actor_obs[:,20:].clone())
             if self.cfg.enable_vision:
-                self.depth_list.append(depth_filtered.detach().cpu().numpy().reshape(120,120))
+                self.depth_list.append(depth_noised.detach().cpu().numpy().reshape(120,120))
 
-        if self.cfg.use_privilege_obs and self.cfg.enable_vision:
+        if self.cfg.use_privilege_obs:
             return {"policy": torch.clamp(normalized_actor_obs, -1.0, 1.0),
                     "critic": torch.clamp(normalized_critic_obs, -1.0, 1.0)}
         else:
@@ -519,7 +556,8 @@ class XArmCubeResidualEnv(DirectRLEnv):
         print(f"Policy type     : {'Vision' if self.cfg.enable_vision else 'State-based'}")
         print(f"Data augment    : {'Yes' if self.cfg.augment_real_data else f'No, using {self.cfg.num_demos} demos'}")
         print(f"DMR             : {'Enabled' if self.cfg.apply_dmr else 'Disabled'}")
-        print(f"Residual policy : {'Enabled' if self.cfg.enable_residual else 'Disabled'}\n")
+        print(f"Residual policy : {'Enabled' if self.cfg.enable_residual else 'Disabled'}")
+        print(f"Asymmetric AC   : {'Yes' if self.cfg.use_privilege_obs else 'No'}\n")
 
     def _init_buffers(self):
         # simulation time
@@ -550,6 +588,8 @@ class XArmCubeResidualEnv(DirectRLEnv):
                                 dtype=torch.long,
                             )
         self.env_idx = torch.arange(self.num_envs, device=self.device) # (num_envs, )
+        self.episode_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long) # (num_envs, )
+        self.success_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long) # (num_envs, )
 
         self.traj_length = self.cfg.traj_length
         self.fingertip_init_pose_10D = torch.tensor([self.cfg.fingertip_init_pose_10D], device=self.device).repeat(self.num_envs, 1) # (num_envs, 10)
@@ -571,9 +611,21 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.cube_high = torch.tensor([self.cfg.cube_upper_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
         self.cube_normalizer = ActionNormalizer(self.cube_low, self.cube_high)
 
-        obs_low = torch.tensor([self.cfg.obs_lower_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
-        obs_high = torch.tensor([self.cfg.obs_upper_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
+        obs_low = torch.tensor([self.cfg.state_obs_lower_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
+        obs_high = torch.tensor([self.cfg.state_obs_upper_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
         self.state_obs_normalizer = ActionNormalizer(obs_low, obs_high)
+
+        privilege_obs_low = torch.tensor([self.cfg.privilege_obs_lower_limit], device=self.device).repeat(self.num_envs, 1) # (num_envs, action_dim)
+        privilege_obs_high = torch.tensor([self.cfg.privilege_obs_upper_limit], device=self.device).repeat(self.num_envs, 1)
+        self.privilege_obs_normalizer = ActionNormalizer(privilege_obs_low, privilege_obs_high)
+
+        self.teleop_hist = HistoryBuffer(num_envs=self.num_envs, 
+                                         hist_length=self.cfg.num_samples * self.cfg.sample_interval + 1,
+                                         state_dim=10,
+                                         num_samples=self.cfg.num_samples,
+                                         sample_spacing=self.cfg.sample_interval,
+                                         )
+        self.teleop_hist.initialize(self.fingertip_init_pose_10D.clone()) # (num_envs, 10)
 
         self.fingertip_goal_10D = self.fingertip_init_pose_10D.clone() # (num_envs, 10)
 
@@ -607,13 +659,13 @@ class XArmCubeResidualEnv(DirectRLEnv):
         all_demos = []
 
         for i in range(1, num_demos+1):
-            traj: torch.Tensor = torch.load(os.path.join(dir, f"demo_traj{1}.pt")).to(device=self.device).unsqueeze(0)                      # (1, traj_length, action_dim)
+            traj: torch.Tensor = torch.load(os.path.join(dir, f"demo_traj{i}.pt"), weights_only=True).to(device=self.device).unsqueeze(0)                      # (1, traj_length, action_dim)
             traj = traj.repeat(self.num_envs, 1, 1)                                                                                         # (num_envs, traj_length, action_dim)
-            traj = resample_trajectory_10d(traj, self.traj_length, self.cfg.action_space)                                                   # (num_envs, traj_length, action_dim)
-            traj[..., -1] = torch.where(traj[..., -1] > 0.2, torch.tensor(1.0, device=traj[..., -1].device), torch.tensor(-1.0, device=traj[..., -1].device))    # convert gripper qpos to binary
+            traj = resample_trajectory_10d(traj, self.traj_length, 10)                                                   # (num_envs, traj_length, action_dim)
+            traj[..., -1] = torch.where(traj[..., -1] > 0.0, 
+                                        torch.tensor(1.0, device=traj[..., -1].device),     # closed 
+                                        torch.tensor(-1.0, device=traj[..., -1].device))    # open
             all_demos.append(traj)
-
-        # TODO: validate traj
 
         return torch.stack(all_demos, dim=1) # (num_envs, num_demos, traj_length, action_dim)
     
@@ -658,7 +710,9 @@ class XArmCubeResidualEnv(DirectRLEnv):
         orient_6d = quat_to_6d(fingertip_quat_b)
 
         finger_qpos = self._robot.data.joint_pos[:,8:9]#torch.mean(self._robot.data.joint_pos[:,7:], dim=1).unsqueeze(1) # TODO check mean here
-        binary_gripper = torch.where(finger_qpos > 0.2, torch.tensor(1.0, device=finger_qpos.device), torch.tensor(-1.0, device=finger_qpos.device))   # convert gripper qpos to binary
+        binary_gripper = torch.where(finger_qpos > 0.2, 
+                                     torch.tensor(1.0, device=finger_qpos.device), 
+                                     torch.tensor(-1.0, device=finger_qpos.device))   # convert gripper qpos to binary
 
         return fingertip_pos_b, fingertip_quat_b, orient_6d, binary_gripper
     
@@ -672,7 +726,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
         fingertip_10D_b = torch.cat((fingertip_pos, fingertip_orn_6D, finger_status), dim=-1) # (num_envs, 10)
         return fingertip_10D_b
     
-    def get_teleop_state_info_b(self):
+    def get_teleop_fingertip_comm(self):
         """
         return:
             get current teleop state in the base frame
@@ -687,12 +741,12 @@ class XArmCubeResidualEnv(DirectRLEnv):
         return teleop_fingertip_pos, teleop_fingertip_quat, teleop_fingertip_orn_6D, teleop_finger_status
 
     def get_teleop_ee_10D_b(self):
-        teleop_pos, _, teleop_orn_6D, finger_status = self.get_teleop_state_info_b()
+        teleop_pos, _, teleop_orn_6D, finger_status = self.get_teleop_fingertip_comm()
         teleop_10D_b = torch.cat((teleop_pos, teleop_orn_6D, finger_status), dim=-1)
         return teleop_10D_b
 
     def get_teleop_ee_7D_b(self):
-        teleop_pos, teleop_quat, _, _ = self.get_teleop_state_info_b()
+        teleop_pos, teleop_quat, _, _ = self.get_teleop_fingertip_comm()
         teleop_7D_b = torch.cat((teleop_pos, teleop_quat), dim=-1)
         return teleop_7D_b
     
@@ -796,11 +850,12 @@ class XArmCubeResidualEnv(DirectRLEnv):
         pick_up_pose_10D = self._get_cube_pick_up_poses(self.training_demo_traj)
         pick_pose = pick_up_pose_10D[torch.arange(self.num_envs, device=self.device), self.demo_idx, :9].clone()
 
-        cube_root[:,:3] = pick_pose.clone()[:,:3]
+        cube_root[:,:2] = pick_pose.clone()[:,:2]
+        cube_root[:,3:7] = quat_from_6d(pick_pose.clone()[:,3:9])
 
         if apply_dmr:
-            cube_root[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x 
-            cube_root[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
+            cube_root[env_ids,0] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #x 
+            cube_root[env_ids,1] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #y
 
         cube_root[:,:3] = torch.clamp(cube_root[:,:3], self.cube_low[:,:3], self.cube_high[:,:3]) # (num_envs, 3)
         cube_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
@@ -815,11 +870,16 @@ class XArmCubeResidualEnv(DirectRLEnv):
         # Reset demo idx
         self.demo_idx[env_ids] = (self.demo_idx[env_ids] + 1) % self.cfg.num_demos 
 
+        # Reset episode count
+        if self.episode_count.sum() >= self.num_envs*2:
+            self.episode_count[:] = 0
+            self.success_count[:] = 0
+
         if not augment_data:
             self.training_demo_traj = self.clean_demo_trajs
         else:
             step_interval = int(torch.randint(20, 41, (1,)).item())
-            pos_noise = torch.rand(1).item() * (0.04 - 0.02) + 0.02
+            pos_noise = torch.rand(1).item() * (0.06 - 0.04) + 0.05
             beta_filter = torch.rand(1).item() * (0.9 - 0.7) + 0.7
             self.training_demo_traj = add_correlated_noise_vectorized(trajectories=self.clean_demo_trajs, 
                                                                         env_ids=env_ids, 
@@ -830,9 +890,12 @@ class XArmCubeResidualEnv(DirectRLEnv):
     def _update_training_traj(self, env_ids, add_noise=True):
         # # update initial pose of demo trajs
         # ee after dmr
-        initial_ee = self.fingertip_10D.clone() # (num_envs, 10)
+        initial_fingertip = self.fingertip_10D.clone() # (num_envs, 10)
         # interpolated from randomized ee to demo traj            
-        initial_traj = interpolate_10d_ee_trajectory(initial_ee[env_ids], self.training_demo_traj[env_ids, self.demo_idx[env_ids], 50, :], 50) # (env_ids, 1, 50, 10)
+        initial_traj = interpolate_10d_ee_trajectory(initial_fingertip[env_ids], self.training_demo_traj[env_ids, self.demo_idx[env_ids], 50, :], 50) # (env_ids, 1, 50, 10)
         # fill in initial traj
         self.training_demo_traj[env_ids, self.demo_idx[env_ids], :50, :] = initial_traj.clone()
+
+        # reset teleop hist and initialize with initial pose
+        self.teleop_hist.initialize(initial_fingertip.clone()[env_ids], env_ids=env_ids) # (num_envs, 10)
 

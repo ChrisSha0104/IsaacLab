@@ -14,7 +14,7 @@ import cv2
 
 # import torch
 
-def filter_sim_depth(sim_depth, min_depth=0.10, max_depth=0.5):
+def filter_sim_depth(sim_depth, min_depth=0.10, max_depth=0.45):
     depth_rotated = torch.rot90(sim_depth, k=1, dims=(-2, -1))
     filtered_depth = torch.nan_to_num(depth_rotated, 
                                       nan=0.0,
@@ -32,96 +32,93 @@ def normalize_depth_01(depth_input, min_depth=0.10, max_depth=0.5):
 
     return normalized_depth.reshape(-1,120*120)
 
-def clamp_depth_01(depth_input, min_depth=0.07, max_depth=0.5):
-    """Normalize depth to range [0, 1] while preserving spatial structure."""
-    depth_input = torch.nan_to_num(depth_input, nan=0.0)  # Replace NaNs with 0
-
-    # Ensure depth values are within the min-max range
-    depth_input = torch.clamp(depth_input, min=min_depth, max=max_depth)
-
-    return depth_input.reshape(-1,120*120)
-
-
-def add_depth_dependent_noise_torch(depth, base_std=0.005, scale=0.02):
-    """Adds Gaussian noise where noise increases with depth distance."""
-    noise_std = base_std + scale * depth  # Standard deviation grows with depth
-    noise = torch.randn_like(depth) * noise_std  # Generate Gaussian noise
-    return torch.clamp(depth + noise, min=0)  # Ensure depth is non-negative
-
-def add_salt_and_pepper_noise_torch(depth, prob=0.02):
-    """Adds salt-and-pepper noise by setting some pixels to 0 (missing depth) or max depth."""
-    noisy_depth = torch.clone(depth)
-    mask = torch.randint(0, 100, depth.shape, device=depth.device) / 100.0  # Random values between 0 and 1
-
-    noisy_depth[mask < (prob / 2)] = 0  # Set some pixels to 0 (black, missing depth)
-    noisy_depth[(mask >= (prob / 2)) & (mask < prob)] = depth.max()  # Set some pixels to max depth (white noise)
-    
-    return noisy_depth
-
-def add_perlin_noise(depth_images, scale=0.1, octaves=4, device="cuda"):
+def make_box_mask(N: int, H: int, W: int,
+                  x_min: int, x_max: int,
+                  y_min: int, y_max: int,
+                  device=None) -> torch.Tensor:
     """
-    Adds Perlin noise to a batch of depth images.
-    
-    Args:
-        depth_images (torch.Tensor): Tensor of shape (num_envs, H, W).
-        scale (float): Scaling factor for noise intensity.
-        device (str): Device to run computation on.
-
-    Returns:
-        torch.Tensor: Noisy depth images of shape (num_envs, H, W).
+    Returns a (N, H*W) binary mask with 1 inside the box.
     """
-    depth_images = depth_images.to(device)  # Move to GPU
-    perlin_map = generate_perlin_noise(depth_images.shape, scale, octaves, device=device) #type: ignore
-    return depth_images + perlin_map
+    device = device or torch.device('cuda')
+    # create coordinate grids
+    xs = torch.arange(W, device=device)[None, None, :].expand(N, H, W)
+    ys = torch.arange(H, device=device)[None, :, None].expand(N, H, W)
+    mask2d = (xs >= x_min) & (xs <= x_max) & (ys >= y_min) & (ys <= y_max)
+    return mask2d.view(N, H*W).to(device)
 
-def generate_perlin_noise(shape, scale=20, threshold=0.5):
+def add_noise_in_depth_band(depth: torch.Tensor,
+                            min_d: float = 0.110,
+                            max_d: float = 0.19,
+                            mean: float = 0.0,
+                            std: float = 0.01,
+                            clip_min: float = 0.1,
+                            clip_max: float = 0.45) -> torch.Tensor:
     """
-    Generate Perlin-like structured noise for masking depth data.
+    Add Gaussian noise only to depth values in [min_d, max_d].
 
     Args:
-        shape (tuple): (num_envs, 1, H, W) tensor shape.
-        scale (int): Controls smoothness of the noise (higher = larger structures).
-        threshold (float): Controls how much area is zeroed out.
-    
+        depth   (torch.Tensor): shape (N, H*W) in meters.
+        min_d   (float): lower depth bound to noise.
+        max_d   (float): upper depth bound to noise.
+        mean    (float): noise mean (m).
+        std     (float): noise stddev (m).
+        clip_min(float): min valid depth (after noise).
+        clip_max(float): max valid depth (after noise), or None to skip.
+
     Returns:
-        torch.Tensor: A (num_envs, 1, H, W) binary mask where 1s are kept and 0s are occlusions.
+        torch.Tensor: same shape, with noise added in that band only.
     """
-    num_envs, _, H, W = shape
-    noise = torch.rand(num_envs, 1, H // scale, W // scale, device='cuda')  # Low-res noise
-    noise = F.interpolate(noise, size=(H, W), mode='bilinear', align_corners=False)  # Upscale
-    return (noise > threshold).float()  # Convert to binary mask (1s = keep, 0s = occlusions)
+    # 1) make a mask of where depth ∈ [min_d, max_d]
+    mask = (depth >= min_d) & (depth <= max_d)  # bool tensor of shape (N, H*W)
 
-def add_realistic_sim2real_noise(depth_map: torch.Tensor, zero_density=0.3):
+    # 2) sample a full noise map, then zero it outside the band
+    noise = torch.randn_like(depth) * std + mean
+    noise = noise * mask.to(depth.dtype)
+
+    # 3) add and clamp
+    depth_noisy = depth + noise
+    if clip_max is not None:
+        depth_noisy = torch.clamp(depth_noisy, clip_min, clip_max)
+    else:
+        depth_noisy = torch.clamp(depth_noisy, clip_min)
+
+    return depth_noisy
+
+def add_depth_and_region_noise(depth: torch.Tensor,
+                               mask:  torch.Tensor,
+                               alpha: float = 0.001,
+                               beta:  float = 0.01,
+                               gamma: float = 0.03,
+                               clip_min: float = 0.1,
+                               clip_max: float = 0.45) -> torch.Tensor:
     """
-    Adds Perlin-noise-based structured dropout to simulate realistic sensor occlusions.
+    depth:    (N, H*W) raw depth in meters
+    mask:     (N, H*W) 0/1 indicator for “region” (gripper/object) pixels
+    alpha:    base (floor) std of noise, in meters
+    beta:     multiplicative factor so that σ_depth = alpha + beta * depth
+    gamma:    extra std added on masked regions
+    clip_min: minimum valid depth
+    clip_max: maximum valid depth (None -> no upper clamp)
 
-    Args:
-        depth_map (torch.Tensor): A (num_envs, 1, 120, 120) depth map tensor.
-        zero_density (float): Controls the proportion of occluded regions.
-        
-    Returns:
-        torch.Tensor: Depth map with realistic structured noise.
+    returns:  depth + N(0, σ_total^2)
     """
-    num_envs, _, H, W = depth_map.shape
-    assert (H, W) == (120, 120), "Depth map must have shape (num_envs, 1, 120, 120)"
+    # 1) heteroscedastic std
+    std_depth = alpha + beta * depth
 
-    noisy_depth = depth_map.clone()
+    # 2) bump up noise in your mask regions
+    std_total = std_depth + mask * gamma
 
-    # Generate Perlin-like structured noise masks
-    gripper_noise_mask = generate_perlin_noise((num_envs, 1, H, W), scale=20, threshold=1 - zero_density)
-    finger_noise_mask = generate_perlin_noise((num_envs, 1, H, W), scale=5, threshold=1 - zero_density)
+    # 3) sample and add
+    noise       = torch.randn_like(depth) * std_total
+    depth_noisy = depth + noise
 
-    # Region 1: Gripper base (y < 30 and depth < 0.1)
-    y_indices = torch.arange(H, device=depth_map.device).view(1, 1, H, 1)
-    gripper_mask = (y_indices > 90) & (depth_map < 0.1)
-    noisy_depth[gripper_mask & (gripper_noise_mask == 0)] = 0.0
+    # 4) clamp to valid sensor range
+    if clip_max is not None:
+        depth_noisy = torch.clamp(depth_noisy, clip_min, clip_max)
+    else:
+        depth_noisy = torch.clamp(depth_noisy, clip_min)
 
-    # Region 2: Fingers (x in (0,40) U (80,120) and y in (30,70))
-    x_indices = torch.arange(W, device=depth_map.device).view(1, 1, 1, W)
-    finger_mask = ((x_indices < 40) | (x_indices >= 80)) & ((y_indices >= 50) & (y_indices < 90))
-    noisy_depth[finger_mask & (finger_noise_mask == 0)] = 0.0
-
-    return noisy_depth
+    return depth_noisy
 
 def save_tensor_as_txt(tensor, filename_prefix="depth_map"):
     """
