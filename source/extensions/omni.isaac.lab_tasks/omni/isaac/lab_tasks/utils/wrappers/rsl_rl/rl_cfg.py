@@ -84,6 +84,52 @@ class RslRlPpoActorCriticCfg:
 
 
 @configclass
+class RslRlResidualPpoAlgorithmCfg:
+    """Configuration for the PPO algorithm."""
+
+    class_name: str = "PPO"
+    """The algorithm class name. Default is PPO."""
+
+    value_loss_coef: float = MISSING
+    """The coefficient for the value loss."""
+
+    use_clipped_value_loss: bool = MISSING
+    """Whether to use clipped value loss."""
+
+    clip_param: float = MISSING
+    """The clipping parameter for the policy."""
+
+    entropy_coef: float = MISSING
+    """The coefficient for the entropy loss."""
+
+    num_learning_epochs: int = MISSING
+    """The number of learning epochs per update."""
+
+    num_mini_batches: int = MISSING
+    """The number of mini-batches per update."""
+
+    actor_critic_lr: float = MISSING
+    """The learning rate for the actor critic networks."""
+
+    encoder_lr: float | bool = MISSING
+    """The learning rate for the encoder networks."""
+
+    schedule: str = MISSING
+    """The learning rate schedule."""
+
+    gamma: float = MISSING
+    """The discount factor."""
+
+    lam: float = MISSING
+    """The lambda parameter for Generalized Advantage Estimation (GAE)."""
+
+    desired_kl: float = MISSING
+    """The desired KL divergence."""
+
+    max_grad_norm: float = MISSING
+    """The maximum gradient norm."""
+
+@configclass
 class RslRlPpoAlgorithmCfg:
     """Configuration for the PPO algorithm."""
 
@@ -149,7 +195,7 @@ class RslRlOnPolicyRunnerCfg:
     policy: RslRlPpoActorCriticCfg | RslRlResidualPpoActorCriticCfg = MISSING
     """The policy configuration."""
 
-    algorithm: RslRlPpoAlgorithmCfg = MISSING
+    algorithm: RslRlPpoAlgorithmCfg | RslRlResidualPpoAlgorithmCfg = MISSING
     """The algorithm configuration."""
 
     ##
@@ -201,3 +247,64 @@ class RslRlOnPolicyRunnerCfg:
 
     If regex expression, the latest (alphabetical order) matching file will be loaded.
     """
+
+@configclass
+class RslRlResidualDistillationStudentTeacherCfg:
+    """Configuration for the distillation student-teacher networks."""
+
+    class_name: str = "ResidualStudentTeacher"
+    """The policy class name. Default is StudentTeacher."""
+
+    init_noise_std: float = MISSING
+    """The initial noise standard deviation for the student policy."""
+
+    noise_std_type: Literal["scalar", "log"] = "scalar"
+    """The type of noise standard deviation for the policy. Default is scalar."""
+
+    student_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the student network."""
+
+    teacher_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the teacher network."""
+
+    activation: str = MISSING
+    """The activation function for the student and teacher networks."""
+
+@configclass
+class RslRlDistillationStudentTeacherCfg:
+    """Configuration for the distillation student-teacher networks."""
+
+    class_name: str = "StudentTeacher"
+    """The policy class name. Default is StudentTeacher."""
+
+    init_noise_std: float = MISSING
+    """The initial noise standard deviation for the student policy."""
+
+    noise_std_type: Literal["scalar", "log"] = "scalar"
+    """The type of noise standard deviation for the policy. Default is scalar."""
+
+    student_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the student network."""
+
+    teacher_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the teacher network."""
+
+    activation: str = MISSING
+    """The activation function for the student and teacher networks."""
+
+
+@configclass
+class RslRlDistillationAlgorithmCfg:
+    """Configuration for the distillation algorithm."""
+
+    class_name: str = "Distillation"
+    """The algorithm class name. Default is Distillation."""
+
+    num_learning_epochs: int = MISSING
+    """The number of updates performed with each sample."""
+
+    learning_rate: float = MISSING
+    """The learning rate for the student policy."""
+
+    gradient_length: int = MISSING
+    """The number of environment steps the gradient flows back."""

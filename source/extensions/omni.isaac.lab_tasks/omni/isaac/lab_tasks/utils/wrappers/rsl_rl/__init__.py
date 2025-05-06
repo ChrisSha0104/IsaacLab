@@ -6,5 +6,7 @@
 """Wrappers and utilities to configure an :class:`ManagerBasedRLEnv` for RSL-RL library."""
 
 from .exporter import export_policy_as_jit, export_policy_as_onnx
-from .rl_cfg import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlResidualPpoActorCriticCfg, RslRlResidualPpoActorCriticCfg
+from .rl_cfg import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, \
+                    RslRlResidualPpoActorCriticCfg, \
+                    RslRlDistillationStudentTeacherCfg, RslRlDistillationAlgorithmCfg, RslRlResidualDistillationStudentTeacherCfg
 from .vecenv_wrapper import RslRlVecEnvWrapper

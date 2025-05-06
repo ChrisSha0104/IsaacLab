@@ -242,15 +242,17 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
 
     # -------- visualization options -------- 
     show_camera = False
-    debug_intermediate_values = False   
+    debug_intermediate_values = False
+    show_success_rate = False   
     order_demos = False
 
     # -------- sim2real options -------- 
     store_sim_trajectory = False
-    storing_path = "RRL/tasks/cube/sim2real/traj3"
+    storing_path = "RRL/tasks/cube/sim2real/traj4"
 
     # -------- rewards --------
-    completion_reward_scale = 1.0
+    nres_penalty_scale = -1e-5 # implies desired nres norm = 1.0
+    completion_reward_scale = 10.0
 
 class XArmCubeResidualEnv(DirectRLEnv):
     # pre-physics step calls
@@ -378,7 +380,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.success_count += (success).long()
 
         if self.cfg.store_sim_trajectory:
-            if len(self.state_list) == self.traj_length + 1:
+            if self.success_count.sum() > 0:
                 os.makedirs(self.cfg.storing_path, exist_ok=True)
                 state_tensor = torch.stack(self.state_list, dim=0).reshape(-1, 10)
                 torch.save(state_tensor[1:], os.path.join(self.cfg.storing_path, "sim_state_obs.pt"))
@@ -403,15 +405,20 @@ class XArmCubeResidualEnv(DirectRLEnv):
         return self._compute_rewards()
 
     def _compute_rewards(self):
+        # log:
         self.fingertip_cube_dist = torch.norm(self.fingertip_pos - self.cube_pos, dim=-1) # (num_envs, )     
         reached_cube = torch.where((self.fingertip_cube_dist < 0.05), 1.0, 0.0)
-                                #   & (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) # extend for longer time
+
+        # completion reward
         picked_cube = torch.where((self.cube_pos[:,2] > self.cfg.minimum_height), 1.0, 0.0)
-                                #   & (self.episode_length_buf >= self.max_episode_length - 1), 1.0, 0.0) 
         completion_reward = picked_cube
+
+        # residual penalty
+        nres_norm = torch.norm(self.n_residual_10D[:,:10], dim=-1)
 
         rewards = (
             self.cfg.completion_reward_scale * completion_reward
+            + self.cfg.nres_penalty_scale * nres_norm
         )
 
         low_finger = torch.where(self.fingertip_pos[:,2] < 0.02, -1.0, 0.0)
@@ -419,17 +426,16 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self.extras["log"] = { # TODO: residual size
             "fingertip_cube_dist": self.fingertip_cube_dist.mean(),
             "reached_cube": reached_cube.mean(),
-            "picked_cube": picked_cube.mean() * self.episode_length_buf.float().mean(),
-            "low_finger": low_finger.mean() * self.episode_length_buf.float().mean(),
-            "raw_policy_output_norm": torch.norm(self.n_residual_10D[:,:10], dim=-1).mean(),
+            "picked_cube": picked_cube.mean(),
+            # "low_finger": low_finger.mean(),
+            "nres_norm": nres_norm.mean(),
+            "nres_penalty_rew": self.cfg.nres_penalty_scale * nres_norm.mean(),
+            "completion_reward": self.cfg.completion_reward_scale * completion_reward.mean(),
             "teleop_misalignment": torch.norm(self.fingertip_goal_10D - self.teleop_fingertip_10D, dim=-1).mean(),
-
-            # "episode_count": self.episode_count.sum(),
-            # "success_count": self.success_count.sum(),
             "cummulative_success_rate": self.success_count.sum().float() / self.episode_count.sum().clamp(min=1).float(),
         }
 
-        if self.cfg.debug_intermediate_values and self.episode_count.sum() % self.num_envs == 0:
+        if self.cfg.show_success_rate and self.episode_count.sum() % self.num_envs == 0:
             if self.episode_count.sum() > 0:
                 print(f"episode count: {self.episode_count.sum()}")
                 print(f"success count: {self.success_count.sum()}")
@@ -539,8 +545,8 @@ class XArmCubeResidualEnv(DirectRLEnv):
         # -------------------------------- sim2real ------------------------------
         if self.cfg.store_sim_trajectory:
             self.state_list.append(actor_obs[:,:10].clone())
-            self.teleop_list.append(actor_obs[:,10:20].clone())
-            self.cube_list.append(actor_obs[:,20:].clone())
+            self.teleop_list.append(teleop_hist.clone())
+            self.cube_list.append(torch.cat((self.cube_pos, self.cube_orn_6D), dim=-1).clone())
             if self.cfg.enable_vision:
                 self.depth_list.append(depth_noised.detach().cpu().numpy().reshape(120,120))
 

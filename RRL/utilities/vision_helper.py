@@ -84,42 +84,6 @@ def add_noise_in_depth_band(depth: torch.Tensor,
 
     return depth_noisy
 
-def add_depth_and_region_noise(depth: torch.Tensor,
-                               mask:  torch.Tensor,
-                               alpha: float = 0.001,
-                               beta:  float = 0.01,
-                               gamma: float = 0.03,
-                               clip_min: float = 0.1,
-                               clip_max: float = 0.45) -> torch.Tensor:
-    """
-    depth:    (N, H*W) raw depth in meters
-    mask:     (N, H*W) 0/1 indicator for “region” (gripper/object) pixels
-    alpha:    base (floor) std of noise, in meters
-    beta:     multiplicative factor so that σ_depth = alpha + beta * depth
-    gamma:    extra std added on masked regions
-    clip_min: minimum valid depth
-    clip_max: maximum valid depth (None -> no upper clamp)
-
-    returns:  depth + N(0, σ_total^2)
-    """
-    # 1) heteroscedastic std
-    std_depth = alpha + beta * depth
-
-    # 2) bump up noise in your mask regions
-    std_total = std_depth + mask * gamma
-
-    # 3) sample and add
-    noise       = torch.randn_like(depth) * std_total
-    depth_noisy = depth + noise
-
-    # 4) clamp to valid sensor range
-    if clip_max is not None:
-        depth_noisy = torch.clamp(depth_noisy, clip_min, clip_max)
-    else:
-        depth_noisy = torch.clamp(depth_noisy, clip_min)
-
-    return depth_noisy
-
 def save_tensor_as_txt(tensor, filename_prefix="depth_map"):
     """
     Save a (num_envs, 120*120) PyTorch tensor as separate .txt files.
@@ -139,15 +103,6 @@ def save_tensor_as_txt(tensor, filename_prefix="depth_map"):
         filename = f"{filename_prefix}_env{i}.txt"
         np.savetxt(filename, np.round(tensor_np[i], 2), fmt="%.2f")
         print(f"Saved: {filename}")
-
-def simulate_depth_noise(depth):
-    """Simulates realistic depth noise including Gaussian noise and salt-and-pepper noise."""
-    depth = add_depth_dependent_noise_torch(depth, base_std=0.005, scale=0.01)
-    depth = add_realistic_sim2real_noise(depth, zero_density=0.7)
-    # depth = add_salt_and_pepper_noise_torch(depth, prob=0.01)
-    # depth = add_perlin_noise(depth, scale=0.05, octaves=4)
-    return depth
-
 
 def transform_point_eef_to_cam(p_eef: torch.Tensor, T_cam2eef: torch.Tensor) -> torch.Tensor:
     """

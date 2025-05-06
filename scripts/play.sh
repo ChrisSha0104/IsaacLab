@@ -26,4 +26,4 @@
 
 
 # VISION!!!
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --num_envs 16 --load_run 2025-05-05_00-26-00_vision_ts4_hist54_DMR --checkpoint model_600
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --num_envs 1 --load_run 2025-05-05_19-02-44_vision_from_scratch_ts4_hist54_DMR --checkpoint model_1400

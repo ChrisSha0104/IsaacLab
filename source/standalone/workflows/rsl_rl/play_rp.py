@@ -120,11 +120,11 @@ def main():
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
     export_policy_as_jit(
-        ppo_runner.alg.actor_critic, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
+        ppo_runner.alg.policy, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
     )
     #TODO: debug why encoder shape error
     # export_policy_as_onnx(
-    #     ppo_runner.alg.actor_critic, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
+    #     ppo_runner.alg.policy, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
     # )
 
     # reset environment
@@ -155,30 +155,10 @@ def main():
                 slow_start = False
             if slowly:
                 time.sleep(0.2)
-            # agent stepping
-            # print("robot obs: ", obs[:,:10])
-            # print("teleop obs: ", obs[:,10:20])
-            # print("cube obs: ", obs[:,20:])
             actions = policy(obs) # output residual
-            # print("actions: ", actions)
-            # torch.save(obs, "obs_test_vis.pt")
-            # print("obs saved")
-            # import pdb; pdb.set_trace()
-            # print("residual : ", actions)
-            # print("output norm: ", torch.norm(actions))
 
             # env stepping
             obs, rew, dones, extras = env.step(actions)
-            # import pdb; pdb.set_trace()
-            # if getattr(env.cfg, "show_camera", False): 
-            #     raw_depth = obs[0,20:].reshape(120,120).detach().cpu().numpy()              # convert to np array
-            #     # rotated_depth = cv2.rotate(raw_depth, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            #     depth_vis = cv2.applyColorMap(cv2.convertScaleAbs(raw_depth, alpha=255 / raw_depth[raw_depth < 15].max().item()), cv2.COLORMAP_JET)
-            #     depth_vis = cv2.resize(depth_vis,(480,480))
-            #     cv2.imshow("depth_image",depth_vis)
-            #     cv2.waitKey(1)
-            
-            # import pdb; pdb.set_trace()
             
         if args_cli.video:
             timestep += 1
@@ -204,31 +184,6 @@ def format_tensor(tensor, precision=3):
             print(row)
     else:
         print("Tensor with more than 2 dimensions is not supported.")
-
-def trim_and_downsample(depth_tensor):
-    """
-    Trims the sides of the depth tensor to keep only the middle 480 pixels in dim=2,
-    then downsamples the last two dimensions by keeping every 4th pixel.
-
-    Args:
-        depth_tensor (torch.Tensor): Shape (num_envs, 1, H=848, W=480)
-
-    Returns:
-        torch.Tensor: Shape (num_envs, 1, H=120, W=120)
-    """
-    H, W = 848, 480
-    depth_tensor = depth_tensor.reshape(H, W)
-    device = depth_tensor.device
-
-    # Step 1: Trim the middle 480 pixels in dim=2 (H dimension)
-    start_idx = (H - 480) // 2
-    end_idx = start_idx + 480
-    depth_tensor_trimmed = depth_tensor[start_idx:end_idx, :]
-
-    # Step 2: Downsample by taking every 4th pixel in both H and W
-    depth_tensor_downsampled = depth_tensor_trimmed[::4, ::4]
-
-    return depth_tensor_downsampled
 
 if __name__ == "__main__":
     # run the main function
