@@ -119,9 +119,9 @@ def main():
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_jit(
-        ppo_runner.alg.policy, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
-    )
+    # export_policy_as_jit(
+    #     ppo_runner.alg.policy, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
+    # )
     #TODO: debug why encoder shape error
     # export_policy_as_onnx(
     #     ppo_runner.alg.policy, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
@@ -159,6 +159,11 @@ def main():
 
             # env stepping
             obs, rew, dones, extras = env.step(actions)
+
+            i+=1
+            if i == 400 and not hasattr(env.cfg, "reset_on_termination"): 
+                env.reset()
+                i = 0  
             
         if args_cli.video:
             timestep += 1

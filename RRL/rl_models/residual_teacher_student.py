@@ -5,11 +5,48 @@
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
 
 from rsl_rl.utils import resolve_nn_activation
+
+class CNNEncoder(nn.Module):
+    def __init__(self, output_dim=128):
+        super(CNNEncoder, self).__init__()
+        
+        # Convolutional layers
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=8, stride=4, padding=0),  # (32, 23, 23)
+            nn.ReLU(),
+            nn.BatchNorm2d(32),
+            
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),  # (64, 12, 12)
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),  # (64, 12, 12)
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            
+            nn.AdaptiveAvgPool2d((6, 6))  # Downsample to (64, 6, 6)
+        )
+        
+        # Fully connected layer
+        self.fc = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(64 * 6 * 6, 256),  # Fully connected layer
+            nn.ReLU(),
+            nn.Linear(256, output_dim)   # Map to 128 dimensions
+        )
+    
+    def forward(self, x):
+        x = self.conv_layers(x)
+        x = self.fc(x)
+        x = x / (x.norm(dim=-1, keepdim=True) + 1e-6) # TODO: remove /5
+        return x
+
 
 def layer_init(layer, nonlinearity="ReLU", std=np.sqrt(2), bias_const=0.0):
     '''
@@ -76,10 +113,16 @@ class ResidualStudentTeacher(nn.Module):
         num_student_obs,
         num_teacher_obs,
         num_actions,
-        student_hidden_dims=[256, 256, 256],
-        teacher_hidden_dims=[256, 256, 256],
-        activation="elu",
+        student_hidden_size=512,
+        student_num_layers=2,
+        student_activation="SiLU",
+        teacher_hidden_size=512,
+        teacher_num_layers=2,
+        teacher_activation="SiLU",
         init_noise_std=0.1,
+        action_head_std=0.01, # initialization gain of last layer
+        visual_size=120*120,
+        encoder_output_dim=128,
         **kwargs,
     ):
         if kwargs:
@@ -88,35 +131,36 @@ class ResidualStudentTeacher(nn.Module):
                 + str([key for key in kwargs.keys()])
             )
         super().__init__()
-        activation = resolve_nn_activation(activation)
-        self.loaded_teacher = False  # indicates if teacher has been loaded
 
-        mlp_input_dim_s = num_student_obs
-        mlp_input_dim_t = num_teacher_obs
+        self.loaded_teacher = False  # indicates if teacher has been loaded
+        
+        self.visual_size = visual_size
+        self.visual_encoder = CNNEncoder(output_dim=encoder_output_dim)
+        self.Height = 120
+        self.Width = 120
+
+        mlp_input_dim_s = num_student_obs - visual_size + encoder_output_dim     # vision policy
+        mlp_input_dim_t = num_teacher_obs                                        # state-based policy
 
         # student
-        student_layers = []
-        student_layers.append(nn.Linear(mlp_input_dim_s, student_hidden_dims[0]))
-        student_layers.append(activation)
-        for layer_index in range(len(student_hidden_dims)):
-            if layer_index == len(student_hidden_dims) - 1:
-                student_layers.append(nn.Linear(student_hidden_dims[layer_index], num_actions))
-            else:
-                student_layers.append(nn.Linear(student_hidden_dims[layer_index], student_hidden_dims[layer_index + 1]))
-                student_layers.append(activation)
-        self.student = nn.Sequential(*student_layers)
+        self.student = build_mlp(
+            input_dim=mlp_input_dim_s,
+            hidden_sizes=[student_hidden_size] * student_num_layers,
+            output_dim=num_actions,
+            activation=student_activation,
+            output_std=action_head_std,
+            bias_on_last_layer=False,            
+        )
 
         # teacher
-        teacher_layers = []
-        teacher_layers.append(nn.Linear(mlp_input_dim_t, teacher_hidden_dims[0]))
-        teacher_layers.append(activation)
-        for layer_index in range(len(teacher_hidden_dims)):
-            if layer_index == len(teacher_hidden_dims) - 1:
-                teacher_layers.append(nn.Linear(teacher_hidden_dims[layer_index], num_actions))
-            else:
-                teacher_layers.append(nn.Linear(teacher_hidden_dims[layer_index], teacher_hidden_dims[layer_index + 1]))
-                teacher_layers.append(activation)
-        self.teacher = nn.Sequential(*teacher_layers)
+        self.teacher = build_mlp(
+            input_dim=mlp_input_dim_t,
+            hidden_sizes=[teacher_hidden_size] * teacher_num_layers,
+            output_dim=num_actions,
+            activation=teacher_activation,
+            output_std=action_head_std,
+            bias_on_last_layer=False,            
+        )
         self.teacher.eval()
 
         print(f"Student MLP: {self.student}")
@@ -147,6 +191,11 @@ class ResidualStudentTeacher(nn.Module):
         return self.distribution.entropy().sum(dim=-1)
 
     def update_distribution(self, observations):
+        # pass through encoder
+        visual_obs = observations[:,-self.visual_size:].reshape(-1, 1, self.Height, self.Width)
+        visual_embedding = self.visual_encoder(visual_obs)
+        observations = torch.cat((observations[:,:-self.visual_size], visual_embedding), dim=-1)
+
         mean = self.student(observations)
         std = self.std.expand_as(mean)
         self.distribution = Normal(mean, std)
@@ -156,6 +205,11 @@ class ResidualStudentTeacher(nn.Module):
         return self.distribution.sample()
 
     def act_inference(self, observations):
+        # pass through encoder
+        visual_obs = observations[:,-self.visual_size:].reshape(-1, 1, self.Height, self.Width)
+        visual_embedding = self.visual_encoder(visual_obs)
+        observations = torch.cat((observations[:,:-self.visual_size], visual_embedding), dim=-1)
+        
         actions_mean = self.student(observations)
         return actions_mean
 

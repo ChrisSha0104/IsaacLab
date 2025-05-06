@@ -12,8 +12,6 @@ from torch.distributions import Normal
 import time
 from typing import Tuple
 
-from RRL.utilities.traj_generator import save_to_txt
-
 '''
 Uses rsl-rl actor critic with visual encoder and residual policy related designs (e.g., orthogonal initialization, small gain factors, low initial standard deviation, and smooth activations (SiLU))
 '''

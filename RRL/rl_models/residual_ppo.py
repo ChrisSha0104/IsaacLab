@@ -151,19 +151,7 @@ class ResidualPPO:
         # Record the rewards and dones
         # Note: we clone here because later on we bootstrap the rewards based on timeouts
         self.transition.rewards = rewards.clone()
-        self.transition.dones = infos["real_dones"].to(dtype=torch.long) # those that get zero-bootstrapped
-
-        # Compute the intrinsic rewards and add to extrinsic rewards
-        if self.rnd:
-            # Obtain curiosity gates / observations from infos
-            rnd_state = infos["observations"]["rnd_state"]
-            # Compute the intrinsic rewards
-            # note: rnd_state is the gated_state after normalization if normalization is used
-            self.intrinsic_rewards, rnd_state = self.rnd.get_intrinsic_reward(rnd_state)
-            # Add intrinsic rewards to extrinsic rewards
-            self.transition.rewards += self.intrinsic_rewards
-            # Record the curiosity gates
-            self.transition.rnd_state = rnd_state.clone()
+        self.transition.dones = dones # real-dones: zero-bootstrapped
 
         # Bootstrapping on time outs
         if "time_outs" in infos:
@@ -171,10 +159,12 @@ class ResidualPPO:
                 self.transition.values * infos["time_outs"].unsqueeze(1).to(self.device), 1
             )
 
+        training_dones = torch.zeros_like(dones, dtype=torch.long)
+
         # record the transition
         self.storage.add_transitions(self.transition)
         self.transition.clear()
-        self.policy.reset(dones)
+        self.policy.reset(training_dones)
 
     def compute_returns(self, last_critic_obs):
         # compute value for the last step

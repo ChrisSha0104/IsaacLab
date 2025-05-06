@@ -15,7 +15,7 @@ from rsl_rl.storage import RolloutStorage
 from .residual_teacher_student import ResidualStudentTeacher
 
 
-class DistillationResidual:
+class ResidualDistillation:
     """Distillation algorithm for training a student model to mimic a teacher model."""
 
     policy: ResidualStudentTeacher | StudentTeacher | StudentTeacherRecurrent

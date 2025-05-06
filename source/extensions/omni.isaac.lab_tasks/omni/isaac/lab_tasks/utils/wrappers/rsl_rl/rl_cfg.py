@@ -172,6 +172,80 @@ class RslRlPpoAlgorithmCfg:
     max_grad_norm: float = MISSING
     """The maximum gradient norm."""
 
+@configclass
+class RslRlResidualDistillationStudentTeacherCfg:
+    """Configuration for the distillation student-teacher networks."""
+
+    class_name: str = "ResidualStudentTeacher"
+    """The policy class name. Default is StudentTeacher."""
+
+    student_hidden_size: int = MISSING
+    """The hidden dimensions of the student network."""
+
+    student_num_layers: int = MISSING
+    """The number of layers in the student network."""
+
+    student_activation: str = MISSING
+    """The activation function for the student network."""
+
+    teacher_hidden_size: int = MISSING
+    """The hidden dimensions of the teacher network."""
+
+    teacher_num_layers: int = MISSING
+    """The number of layers in the teacher network."""
+
+    teacher_activation: str = MISSING
+    """The activation function for the teacher network."""
+
+    init_noise_std: float = MISSING
+    """The initial noise standard deviation for the student policy."""
+
+    action_head_std: float = MISSING
+    """The initialization gain of the last layer of the action head."""
+
+    visual_size: int = MISSING
+    """The size of the visual input."""
+
+    encoder_output_dim: int = MISSING
+    """The output dimension of the visual encoder."""
+
+@configclass
+class RslRlDistillationStudentTeacherCfg:
+    """Configuration for the distillation student-teacher networks."""
+
+    class_name: str = "StudentTeacher"
+    """The policy class name. Default is StudentTeacher."""
+
+    init_noise_std: float = MISSING
+    """The initial noise standard deviation for the student policy."""
+
+    noise_std_type: Literal["scalar", "log"] = "scalar"
+    """The type of noise standard deviation for the policy. Default is scalar."""
+
+    student_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the student network."""
+
+    teacher_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the teacher network."""
+
+    activation: str = MISSING
+    """The activation function for the student and teacher networks."""
+
+@configclass
+class RslRlDistillationAlgorithmCfg:
+    """Configuration for the distillation algorithm."""
+
+    class_name: str = "Distillation"
+    """The algorithm class name. Default is Distillation."""
+
+    num_learning_epochs: int = MISSING
+    """The number of updates performed with each sample."""
+
+    learning_rate: float = MISSING
+    """The learning rate for the student policy."""
+
+    gradient_length: int = MISSING
+    """The number of environment steps the gradient flows back."""
 
 @configclass
 class RslRlOnPolicyRunnerCfg:
@@ -192,10 +266,10 @@ class RslRlOnPolicyRunnerCfg:
     empirical_normalization: bool = MISSING
     """Whether to use empirical normalization."""
 
-    policy: RslRlPpoActorCriticCfg | RslRlResidualPpoActorCriticCfg = MISSING
+    policy: RslRlPpoActorCriticCfg | RslRlResidualPpoActorCriticCfg | RslRlResidualDistillationStudentTeacherCfg = MISSING
     """The policy configuration."""
 
-    algorithm: RslRlPpoAlgorithmCfg | RslRlResidualPpoAlgorithmCfg = MISSING
+    algorithm: RslRlPpoAlgorithmCfg | RslRlResidualPpoAlgorithmCfg | RslRlDistillationAlgorithmCfg = MISSING
     """The algorithm configuration."""
 
     ##
@@ -248,63 +322,4 @@ class RslRlOnPolicyRunnerCfg:
     If regex expression, the latest (alphabetical order) matching file will be loaded.
     """
 
-@configclass
-class RslRlResidualDistillationStudentTeacherCfg:
-    """Configuration for the distillation student-teacher networks."""
 
-    class_name: str = "ResidualStudentTeacher"
-    """The policy class name. Default is StudentTeacher."""
-
-    init_noise_std: float = MISSING
-    """The initial noise standard deviation for the student policy."""
-
-    noise_std_type: Literal["scalar", "log"] = "scalar"
-    """The type of noise standard deviation for the policy. Default is scalar."""
-
-    student_hidden_dims: list[int] = MISSING
-    """The hidden dimensions of the student network."""
-
-    teacher_hidden_dims: list[int] = MISSING
-    """The hidden dimensions of the teacher network."""
-
-    activation: str = MISSING
-    """The activation function for the student and teacher networks."""
-
-@configclass
-class RslRlDistillationStudentTeacherCfg:
-    """Configuration for the distillation student-teacher networks."""
-
-    class_name: str = "StudentTeacher"
-    """The policy class name. Default is StudentTeacher."""
-
-    init_noise_std: float = MISSING
-    """The initial noise standard deviation for the student policy."""
-
-    noise_std_type: Literal["scalar", "log"] = "scalar"
-    """The type of noise standard deviation for the policy. Default is scalar."""
-
-    student_hidden_dims: list[int] = MISSING
-    """The hidden dimensions of the student network."""
-
-    teacher_hidden_dims: list[int] = MISSING
-    """The hidden dimensions of the teacher network."""
-
-    activation: str = MISSING
-    """The activation function for the student and teacher networks."""
-
-
-@configclass
-class RslRlDistillationAlgorithmCfg:
-    """Configuration for the distillation algorithm."""
-
-    class_name: str = "Distillation"
-    """The algorithm class name. Default is Distillation."""
-
-    num_learning_epochs: int = MISSING
-    """The number of updates performed with each sample."""
-
-    learning_rate: float = MISSING
-    """The learning rate for the student policy."""
-
-    gradient_length: int = MISSING
-    """The number of environment steps the gradient flows back."""

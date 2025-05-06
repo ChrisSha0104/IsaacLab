@@ -26,6 +26,8 @@ from rsl_rl.utils import store_code_state
 from .residual_ppo import ResidualPPO
 from .residual_actor_critic import ResidualActorCritic
 
+from .residual_distillation import ResidualDistillation
+from .residual_teacher_student import ResidualStudentTeacher
 
 class OnPolicyRunnerResidual:
     """On-policy runner for training and evaluation."""
@@ -41,9 +43,9 @@ class OnPolicyRunnerResidual:
         self._configure_multi_gpu()
 
         # resolve training type depending on the algorithm
-        if self.alg_cfg["class_name"] == "PPO" or "ResidualPPO":
+        if self.alg_cfg["class_name"] == "PPO" or self.alg_cfg["class_name"] == "ResidualPPO":
             self.training_type = "rl"
-        elif self.alg_cfg["class_name"] == "Distillation":
+        elif self.alg_cfg["class_name"] == "Distillation" or self.alg_cfg["class_name"] == "ResidualDistillation":
             self.training_type = "distillation"
         else:
             raise ValueError(f"Training type not found for algorithm {self.alg_cfg['class_name']}.")
@@ -72,7 +74,7 @@ class OnPolicyRunnerResidual:
 
         # evaluate the policy class
         policy_class = eval(self.policy_cfg.pop("class_name"))
-        policy: ResidualActorCritic | ActorCritic | ActorCriticRecurrent | StudentTeacher | StudentTeacherRecurrent = policy_class(
+        policy: ResidualActorCritic | ActorCritic | ActorCriticRecurrent | ResidualStudentTeacher |  StudentTeacher | StudentTeacherRecurrent = policy_class(
             num_obs, num_privileged_obs, self.env.num_actions, **self.policy_cfg
         ).to(self.device)
 
@@ -96,7 +98,7 @@ class OnPolicyRunnerResidual:
 
         # initialize algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))
-        self.alg: ResidualPPO | PPO | Distillation = alg_class(policy, device=self.device, **self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg)
+        self.alg: ResidualPPO | PPO | Distillation | ResidualDistillation = alg_class(policy, device=self.device, **self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg)
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
@@ -176,8 +178,8 @@ class OnPolicyRunnerResidual:
 
         # Book keeping
         ep_infos = []
-        rewbuffer = deque(maxlen=self.num_steps_per_env)
-        lenbuffer = deque(maxlen=self.num_steps_per_env)
+        rewbuffer = deque(maxlen=max(self.env.num_envs, 100))
+        lenbuffer = deque(maxlen=max(self.env.num_envs, 100))
         cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
         cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
 
@@ -201,12 +203,12 @@ class OnPolicyRunnerResidual:
         for it in range(start_iter, tot_iter):
             start = time.time()
             # Rollout
-            cur_episode_length.zero_()
-            cur_reward_sum.zero_()
             with torch.inference_mode():
                 self.episode_active[:] = 1.0
-                cur_reward_sum[:] = 0
-                cur_episode_length[:] = 0
+                if self.training_type == "rl":
+                    # clear curr reward and episode length sum b/c doing full rollouts
+                    cur_reward_sum[:] = 0
+                    cur_episode_length[:] = 0
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
                     actions = self.alg.act(obs, privileged_obs)
@@ -223,11 +225,14 @@ class OnPolicyRunnerResidual:
                     else:
                         privileged_obs = obs
 
-                    real_dones = infos["real_dones"].to(self.device)
-                    masked_rew = rewards * self.episode_active
+                    if self.training_type == "rl":
+                        masked_rew = rewards * self.episode_active
+                    else:
+                        # Distillation: use the original rewards
+                        masked_rew = rewards
 
                     # process the step
-                    self.alg.process_env_step(masked_rew, real_dones, infos)
+                    self.alg.process_env_step(masked_rew, dones, infos)
 
                     # Extract intrinsic rewards (only for logging)
                     intrinsic_rewards = self.alg.intrinsic_rewards if self.alg.rnd else None
@@ -239,21 +244,22 @@ class OnPolicyRunnerResidual:
                         elif "log" in infos:
                             ep_infos.append(infos["log"])
                         # Update rewards
-                        if self.alg.rnd:
-                            cur_ereward_sum += rewards
-                            cur_ireward_sum += intrinsic_rewards  # type: ignore
-                            cur_reward_sum += rewards + intrinsic_rewards
-                        else:
-                            cur_reward_sum += masked_rew
+                        cur_reward_sum += masked_rew
                         # Update episode length
-
-                        cur_episode_length[(self.episode_active > 0)] += 1
+                        cur_episode_length += 1
                         # Clear data for completed episodes
                         # -- common
-                        just_finished = (real_dones > 0) * self.episode_active
-                        new_ids = just_finished.nonzero(as_tuple=False)
-                        rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
-                        lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
+                        if self.training_type == "rl":
+                            just_finished = (self.episode_active > 0) * (dones > 0)
+                            new_ids = (just_finished > 0).nonzero(as_tuple=False)
+                            rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
+                            lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
+                        else:
+                            new_ids = (dones > 0).nonzero(as_tuple=False)
+                            rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
+                            lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
+                            cur_reward_sum[new_ids] = 0
+                            cur_episode_length[new_ids] = 0
 
                         # -- intrinsic and extrinsic rewards
                         if self.alg.rnd:
@@ -262,7 +268,7 @@ class OnPolicyRunnerResidual:
                             cur_ereward_sum[new_ids] = 0
                             cur_ireward_sum[new_ids] = 0
                         
-                    self.episode_active *= (1.0 - real_dones)
+                    self.episode_active *= (1.0 - dones)
 
                 stop = time.time()
                 collection_time = stop - start
@@ -271,7 +277,8 @@ class OnPolicyRunnerResidual:
                 # compute returns
                 if self.training_type == "rl":
                     self.alg.compute_returns(privileged_obs)
-                    if "real_dones" in infos:
+                    if "real_dones" in infos: # TODO REMOVE!!!!
+                        import pdb; pdb.set_trace()
                         self.env.reset()
 
             rollout_success_rate = infos["success"].float().mean()

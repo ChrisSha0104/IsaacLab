@@ -1,35 +1,8 @@
-# state based
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-State-v2 --max_iterations 2000 --num_envs 3 --run_name test_del --headless
+# vision from scratch
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-Vision-From-Scratch --enable_cameras --num_envs 1 --load_run 2025-05-05_19-02-44_vision_from_scratch_ts4_hist54_DMR --checkpoint model_1400
 
-# cam
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-v5 --enable_cameras --headless --num_envs 512 --run_name deployable_zed_no_empnorm_alpha0.1 --max_iterations 2000
+# student (vision):
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-Student --enable_cameras --num_envs 512 --headless --load_run state_teacher --resume True --run_name distillation_test
 
-# gear task
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Gear-v0 --enable_cameras --headless --num_envs 3 --run_name gear_test --max_iterations 100
-
-
-# battery task
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --headless --num_envs 512 --run_name battery_cam_abs_v1 --max_iterations 2000
-
-# battery state-based
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Battery-v0 --enable_cameras --headless --num_envs 2048 --run_name battery_state_abs_no_noise_no_falling --max_iterations 2000
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-### new cube ###
-# VISION
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-Vision-v0 --enable_cameras --headless --num_envs 256 --run_name vision_from_scratch_fixed_encoder_nres_pen --max_iterations 5000 #TODO: change to 512
-
-# STATEBASED
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-State-v0  --num_envs 1024 --headless --run_name state_full_rollout --max_iterations 5000
+# teacher (state-based):
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-Teacher --num_envs 49 --load_run 2025-05-06_12-56-26_state_full_rollout_redu_res_rate

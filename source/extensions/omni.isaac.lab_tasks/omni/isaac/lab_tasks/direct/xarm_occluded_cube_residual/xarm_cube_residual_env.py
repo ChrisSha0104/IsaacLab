@@ -243,7 +243,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
 
     # -------- visualization options -------- 
     show_camera = False
-    debug_intermediate_values = False
+    debug_intermediate_values = True
     order_demos = False
 
     # -------- sim2real options -------- 
@@ -253,7 +253,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     # -------- rewards --------
     nres_penalty_scale = -1e-2
     nres_rate_scale = -1e-4
-    completion_reward_scale = 1.0
+    completion_reward_scale = 10.0
 
 class XArmCubeResidualEnv(DirectRLEnv):
     # pre-physics step calls
@@ -300,9 +300,9 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
         if self.cfg.debug_intermediate_values:
             self.marker1.visualize(self.fingertip_pos + self.scene.env_origins, self.fingertip_quat)
-            self.marker4.visualize(self.ee_pos + self.scene.env_origins, self.fingertip_quat)
+            # self.marker4.visualize(self.ee_pos + self.scene.env_origins, self.fingertip_quat)
             self.marker2.visualize(self.teleop_fingertip_pos + self.scene.env_origins, self.teleop_fingertip_quat)
-            self.marker3.visualize(self.cube_pos + self.scene.env_origins, self.cube_quat)
+            # self.marker3.visualize(self.cube_pos + self.scene.env_origins, self.cube_quat)
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -359,12 +359,15 @@ class XArmCubeResidualEnv(DirectRLEnv):
         self._robot.set_joint_position_target(self.robot_dof_targets[:,:], joint_ids=[i for i in range(self.num_eff_joints)])
 
     def step(self, output):
-        _return = super().step(output)
+        obs_buf, reward_buf, reset_terminated, reset_time_outs, extras = super().step(output)
         if self.cfg.enable_vision:
             self._camera.update(dt=self.dt)
 
+        if self.reward_normalizer is not None:
+            reward_buf = self.reward_normalizer(reward_buf)
+
         self.time_step_per_env += 1
-        return _return
+        return obs_buf, reward_buf, reset_terminated, reset_time_outs, extras
     
     # post-physics step calls 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -376,8 +379,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
         terminated |= success
 
         truncated = self.episode_length_buf >= self.max_episode_length - 1
-
-        done = terminated | truncated | success
 
         if self.cfg.store_sim_trajectory:
             if len(self.state_list) > self.cfg.traj_length:
@@ -619,6 +620,10 @@ class XArmCubeResidualEnv(DirectRLEnv):
         privilege_obs_high = torch.tensor([self.cfg.privilege_obs_upper_limit], device=self.device).repeat(self.num_envs, 1)
         self.privilege_obs_normalizer = ActionNormalizer(privilege_obs_low, privilege_obs_high)
 
+        self.reward_normalizer = (
+            RunningMeanStdClip(shape=(1,), clip_value=5.0)
+        )
+
         self.teleop_hist = HistoryBuffer(num_envs=self.num_envs, 
                                          hist_length=self.cfg.num_samples * self.cfg.sample_interval + 1,
                                          state_dim=10,
@@ -854,8 +859,8 @@ class XArmCubeResidualEnv(DirectRLEnv):
         cube_root[:,3:7] = quat_from_6d(pick_pose.clone()[:,3:9])
 
         if apply_dmr:
-            cube_root[env_ids,0] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #x 
-            cube_root[env_ids,1] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #y
+            cube_root[env_ids,0] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #x 
+            cube_root[env_ids,1] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #y
 
         cube_root[:,:3] = torch.clamp(cube_root[:,:3], self.cube_low[:,:3], self.cube_high[:,:3]) # (num_envs, 3)
         cube_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
