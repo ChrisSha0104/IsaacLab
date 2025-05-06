@@ -1,4 +1,3 @@
-from .residual_actor_critic_vision import ResidualActorCriticVisual
 from .on_policy_runner_residual import OnPolicyRunnerResidual
 from .residual_ppo import ResidualPPO
 from .residual_actor_critic import ResidualActorCritic
