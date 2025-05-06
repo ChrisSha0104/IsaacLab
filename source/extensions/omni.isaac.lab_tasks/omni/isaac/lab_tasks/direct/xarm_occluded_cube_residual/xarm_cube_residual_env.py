@@ -58,6 +58,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     observation_space = 10 + 10 + 120*120           # [robot state, teleop action, depth image]
     state_space = 10 + 10 + 9 + 120*120             # [robot state, teleop action, depth image, object state, demo idx]
     rerender_on_reset = False
+    is_finite_horizon = True
     # simulation
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 120, # NOTE: 30 Hz
@@ -202,7 +203,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
 
     # -------- training options -------- 
     training_data_path = "RRL/tasks/cube/training_set4"
-    enable_vision = True
+    enable_vision = False
     enable_residual = True
     use_privilege_obs = True 
     apply_dmr = True           
@@ -211,7 +212,7 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     # -------- training params --------
     traj_length = 400
     num_demos = 50
-    alpha = 0.25    # residual scale
+    alpha = 0.1    # residual scale
     tilde = 1.0     # low pass filter
     num_samples = 5 # number of teleop samples to be used for training
     sample_interval = 4 # sample interval for teleop samples # TODO: increase to 5
@@ -243,7 +244,6 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     # -------- visualization options -------- 
     show_camera = False
     debug_intermediate_values = False
-    show_success_rate = False   
     order_demos = False
 
     # -------- sim2real options -------- 
@@ -251,8 +251,9 @@ class XArmCubeResidualEnvCfg(DirectRLEnvCfg):
     storing_path = "RRL/tasks/cube/sim2real/traj4"
 
     # -------- rewards --------
-    nres_penalty_scale = -1e-5 # implies desired nres norm = 1.0
-    completion_reward_scale = 10.0
+    nres_penalty_scale = -1e-2
+    nres_rate_scale = -1e-4
+    completion_reward_scale = 1.0
 
 class XArmCubeResidualEnv(DirectRLEnv):
     # pre-physics step calls
@@ -330,6 +331,7 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
     # pre-physics step calls
     def _pre_physics_step(self, noutput: torch.Tensor):
+        self.last_nres = self.n_residual_10D.clone() if hasattr(self, "n_residual_10D") else noutput.clone()[:,:10]
         self.n_residual_10D = noutput.clone()[:,:10]
 
         if self.cfg.store_sim_trajectory:
@@ -376,11 +378,9 @@ class XArmCubeResidualEnv(DirectRLEnv):
         truncated = self.episode_length_buf >= self.max_episode_length - 1
 
         done = terminated | truncated | success
-        self.episode_count += (done).long()
-        self.success_count += (success).long()
 
         if self.cfg.store_sim_trajectory:
-            if self.success_count.sum() > 0:
+            if len(self.state_list) > self.cfg.traj_length:
                 os.makedirs(self.cfg.storing_path, exist_ok=True)
                 state_tensor = torch.stack(self.state_list, dim=0).reshape(-1, 10)
                 torch.save(state_tensor[1:], os.path.join(self.cfg.storing_path, "sim_state_obs.pt"))
@@ -416,9 +416,12 @@ class XArmCubeResidualEnv(DirectRLEnv):
         # residual penalty
         nres_norm = torch.norm(self.n_residual_10D[:,:10], dim=-1)
 
+        # residual rate
+        nres_rate = torch.norm(self.n_residual_10D - self.last_nres, dim=-1) / self.dt
+
         rewards = (
             self.cfg.completion_reward_scale * completion_reward
-            + self.cfg.nres_penalty_scale * nres_norm
+            # + self.cfg.nres_penalty_scale * nres_norm
         )
 
         low_finger = torch.where(self.fingertip_pos[:,2] < 0.02, -1.0, 0.0)
@@ -429,18 +432,11 @@ class XArmCubeResidualEnv(DirectRLEnv):
             "picked_cube": picked_cube.mean(),
             # "low_finger": low_finger.mean(),
             "nres_norm": nres_norm.mean(),
-            "nres_penalty_rew": self.cfg.nres_penalty_scale * nres_norm.mean(),
-            "completion_reward": self.cfg.completion_reward_scale * completion_reward.mean(),
             "teleop_misalignment": torch.norm(self.fingertip_goal_10D - self.teleop_fingertip_10D, dim=-1).mean(),
-            "cummulative_success_rate": self.success_count.sum().float() / self.episode_count.sum().clamp(min=1).float(),
+            "nres_penalty_rew": (self.cfg.nres_penalty_scale * nres_norm).mean(),
+            "nres_rate_rew": (self.cfg.nres_rate_scale * nres_rate).mean(),
+            "completion_rew": (self.cfg.completion_reward_scale * completion_reward).mean(),
         }
-
-        if self.cfg.show_success_rate and self.episode_count.sum() % self.num_envs == 0:
-            if self.episode_count.sum() > 0:
-                print(f"episode count: {self.episode_count.sum()}")
-                print(f"success count: {self.success_count.sum()}")
-                print(f"overall success rate: {self.success_count.sum().float() / self.episode_count.sum().clamp(min=1).float()}")
-                print(f"failed demos: {self.demo_idx[self.success_count == 0]}")
 
         return rewards
     
@@ -594,8 +590,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
                                 dtype=torch.long,
                             )
         self.env_idx = torch.arange(self.num_envs, device=self.device) # (num_envs, )
-        self.episode_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long) # (num_envs, )
-        self.success_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long) # (num_envs, )
 
         self.traj_length = self.cfg.traj_length
         self.fingertip_init_pose_10D = torch.tensor([self.cfg.fingertip_init_pose_10D], device=self.device).repeat(self.num_envs, 1) # (num_envs, 10)
@@ -860,8 +854,8 @@ class XArmCubeResidualEnv(DirectRLEnv):
         cube_root[:,3:7] = quat_from_6d(pick_pose.clone()[:,3:9])
 
         if apply_dmr:
-            cube_root[env_ids,0] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #x 
-            cube_root[env_ids,1] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #y
+            cube_root[env_ids,0] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #x 
+            cube_root[env_ids,1] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #y
 
         cube_root[:,:3] = torch.clamp(cube_root[:,:3], self.cube_low[:,:3], self.cube_high[:,:3]) # (num_envs, 3)
         cube_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
@@ -875,11 +869,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
         # Reset demo idx
         self.demo_idx[env_ids] = (self.demo_idx[env_ids] + 1) % self.cfg.num_demos 
-
-        # Reset episode count
-        if self.episode_count.sum() >= self.num_envs*2:
-            self.episode_count[:] = 0
-            self.success_count[:] = 0
 
         if not augment_data:
             self.training_demo_traj = self.clean_demo_trajs

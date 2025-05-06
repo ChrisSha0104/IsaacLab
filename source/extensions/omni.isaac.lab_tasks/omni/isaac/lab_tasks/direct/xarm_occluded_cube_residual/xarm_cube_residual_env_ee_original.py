@@ -447,8 +447,6 @@ class XArmCubeResidualEnv(DirectRLEnv):
 
         # step through physics
         self._step_sim_no_action()
-
-        import pdb; pdb.set_trace()
         
         # recompute / update training traj based on randomized robot state
         self._update_training_traj(env_ids, self.cfg.augment_real_data)

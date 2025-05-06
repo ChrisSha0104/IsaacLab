@@ -151,7 +151,7 @@ class ResidualPPO:
         # Record the rewards and dones
         # Note: we clone here because later on we bootstrap the rewards based on timeouts
         self.transition.rewards = rewards.clone()
-        self.transition.dones = dones
+        self.transition.dones = infos["real_dones"].to(dtype=torch.long) # those that get zero-bootstrapped
 
         # Compute the intrinsic rewards and add to extrinsic rewards
         if self.rnd:

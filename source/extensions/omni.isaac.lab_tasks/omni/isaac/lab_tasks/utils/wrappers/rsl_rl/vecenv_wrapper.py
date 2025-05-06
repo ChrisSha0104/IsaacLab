@@ -176,8 +176,11 @@ class RslRlVecEnvWrapper(VecEnv):
         # record step information
         obs_dict, rew, terminated, truncated, extras = self.env.step(actions)
 
+        # TODO: check if this still works for distillation!!!
         # compute dones for compatibility with RSL-RL
-        dones = (terminated | truncated).to(dtype=torch.long)
+        real_dones = (terminated | truncated).to(dtype=torch.long) # actually done -> zero-bootstrap
+        train_dones = torch.zeros_like(real_dones, dtype=torch.long) # training done -> bootstrap
+        extras["real_dones"] = real_dones.float()
 
         # move extra observations to the extras dict
         obs = obs_dict["policy"]
@@ -185,11 +188,12 @@ class RslRlVecEnvWrapper(VecEnv):
         # move time out information to the extras dict
         # this is only needed for infinite horizon tasks
         if not self.unwrapped.cfg.is_finite_horizon: # NOTE: evaluates to true for residual policy
+            import pdb; pdb.set_trace() # TODO: check and del
             success = extras.get("success", False)
             extras["time_outs"] = (truncated & (~success)).float()
 
         # return the step information
-        return obs, rew, dones, extras
+        return obs, rew, train_dones, extras
 
     def close(self):  # noqa: D102
         return self.env.close()

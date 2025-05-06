@@ -23,9 +23,9 @@ from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import (
 
 @configclass
 class XArmResidualCubeStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 64 # vs full episode Monte Carlo  # 64
+    num_steps_per_env = 400
     max_iterations = 2000 
-    save_interval = 50
+    save_interval = 2
     experiment_name = "xarm-cube-residual-state" 
     empirical_normalization = False
     policy = RslRlResidualPpoActorCriticCfg(
@@ -53,9 +53,9 @@ class XArmResidualCubeStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         use_clipped_value_loss=True,
         clip_param=0.2,
         entropy_coef=0.0,
-        num_learning_epochs=16, # to 16
-        num_mini_batches=8,
-        learning_rate=3.0e-4, #REDUCE LEARNING RATE
+        num_learning_epochs=50, 
+        num_mini_batches=1,
+        learning_rate=3.0e-4,
         schedule= "adaptive", 
         gamma=0.999,
         lam=0.95, 
@@ -65,9 +65,9 @@ class XArmResidualCubeStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 @configclass
 class XArmResidualCubeVisionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 64
+    num_steps_per_env = 400 # 64*1024
     max_iterations = 2000 
-    save_interval = 50
+    save_interval = 2
     experiment_name = "xarm-cube-residual-vision" 
     empirical_normalization = False
     policy = RslRlResidualPpoActorCriticCfg(
@@ -95,8 +95,8 @@ class XArmResidualCubeVisionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         use_clipped_value_loss=True,
         clip_param=0.2,
         entropy_coef=0.0,
-        num_learning_epochs=8, 
-        num_mini_batches=8,
+        num_learning_epochs=50, 
+        num_mini_batches=1,
         learning_rate=3.0e-4, #REDUCE LEARNING RATE
         schedule= "adaptive", 
         gamma=0.999,

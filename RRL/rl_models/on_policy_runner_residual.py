@@ -132,6 +132,8 @@ class OnPolicyRunnerResidual:
         self.current_learning_iteration = 0
         self.git_status_repos = [rsl_rl.__file__]
 
+        self.episode_active = torch.ones(self.env.num_envs, device=self.device)
+
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
         if self.log_dir is not None and self.writer is None and not self.disable_logs:
@@ -174,8 +176,8 @@ class OnPolicyRunnerResidual:
 
         # Book keeping
         ep_infos = []
-        rewbuffer = deque(maxlen=100)
-        lenbuffer = deque(maxlen=100)
+        rewbuffer = deque(maxlen=self.num_steps_per_env)
+        lenbuffer = deque(maxlen=self.num_steps_per_env)
         cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
         cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
 
@@ -199,7 +201,12 @@ class OnPolicyRunnerResidual:
         for it in range(start_iter, tot_iter):
             start = time.time()
             # Rollout
+            cur_episode_length.zero_()
+            cur_reward_sum.zero_()
             with torch.inference_mode():
+                self.episode_active[:] = 1.0
+                cur_reward_sum[:] = 0
+                cur_episode_length[:] = 0
                 for _ in range(self.num_steps_per_env):
                     # Sample actions
                     actions = self.alg.act(obs, privileged_obs)
@@ -216,8 +223,11 @@ class OnPolicyRunnerResidual:
                     else:
                         privileged_obs = obs
 
+                    real_dones = infos["real_dones"].to(self.device)
+                    masked_rew = rewards * self.episode_active
+
                     # process the step
-                    self.alg.process_env_step(rewards, dones, infos)
+                    self.alg.process_env_step(masked_rew, real_dones, infos)
 
                     # Extract intrinsic rewards (only for logging)
                     intrinsic_rewards = self.alg.intrinsic_rewards if self.alg.rnd else None
@@ -234,22 +244,25 @@ class OnPolicyRunnerResidual:
                             cur_ireward_sum += intrinsic_rewards  # type: ignore
                             cur_reward_sum += rewards + intrinsic_rewards
                         else:
-                            cur_reward_sum += rewards
+                            cur_reward_sum += masked_rew
                         # Update episode length
-                        cur_episode_length += 1
+
+                        cur_episode_length[(self.episode_active > 0)] += 1
                         # Clear data for completed episodes
                         # -- common
-                        new_ids = (dones > 0).nonzero(as_tuple=False)
+                        just_finished = (real_dones > 0) * self.episode_active
+                        new_ids = just_finished.nonzero(as_tuple=False)
                         rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
                         lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
-                        cur_reward_sum[new_ids] = 0
-                        cur_episode_length[new_ids] = 0
+
                         # -- intrinsic and extrinsic rewards
                         if self.alg.rnd:
                             erewbuffer.extend(cur_ereward_sum[new_ids][:, 0].cpu().numpy().tolist())
                             irewbuffer.extend(cur_ireward_sum[new_ids][:, 0].cpu().numpy().tolist())
                             cur_ereward_sum[new_ids] = 0
                             cur_ireward_sum[new_ids] = 0
+                        
+                    self.episode_active *= (1.0 - real_dones)
 
                 stop = time.time()
                 collection_time = stop - start
@@ -258,6 +271,10 @@ class OnPolicyRunnerResidual:
                 # compute returns
                 if self.training_type == "rl":
                     self.alg.compute_returns(privileged_obs)
+                    if "real_dones" in infos:
+                        self.env.reset()
+
+            rollout_success_rate = infos["success"].float().mean()
 
             # update policy
             loss_dict = self.alg.update()
@@ -345,6 +362,7 @@ class OnPolicyRunnerResidual:
             # everything else
             self.writer.add_scalar("Train/mean_reward", statistics.mean(locs["rewbuffer"]), locs["it"])
             self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
+            self.writer.add_scalar("Train/rollout_success_rate", locs["rollout_success_rate"], locs["it"])
             if self.logger_type != "wandb":  # wandb does not support non-integer x-axis logging
                 self.writer.add_scalar("Train/mean_reward/time", statistics.mean(locs["rewbuffer"]), self.tot_time)
                 self.writer.add_scalar(
@@ -371,6 +389,7 @@ class OnPolicyRunnerResidual:
                     f"""{'Mean intrinsic reward:':>{pad}} {statistics.mean(locs['irewbuffer']):.2f}\n"""
                 )
             log_string += f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
+            log_string += f"""{'Mean rollout success rate:':>{pad}} {locs['rollout_success_rate']:.2f}\n"""
             # -- episode info
             log_string += f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
         else:
