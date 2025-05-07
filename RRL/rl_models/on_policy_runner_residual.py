@@ -200,6 +200,7 @@ class OnPolicyRunnerResidual:
         # Start training
         start_iter = self.current_learning_iteration
         tot_iter = start_iter + num_learning_iterations
+        curr_success_rate = 0.0
         for it in range(start_iter, tot_iter):
             start = time.time()
             # Rollout
@@ -277,11 +278,11 @@ class OnPolicyRunnerResidual:
                 # compute returns
                 if self.training_type == "rl":
                     self.alg.compute_returns(privileged_obs)
-                    if "real_dones" in infos: # TODO REMOVE!!!!
-                        import pdb; pdb.set_trace()
-                        self.env.reset()
+                    self.env.reset()
 
-            rollout_success_rate = infos["success"].float().mean()
+            last_succee_rate = curr_success_rate
+            curr_success_rate = infos["success"].float().mean()
+            rolling_success_rate = 0.5 * curr_success_rate + 0.5 * last_succee_rate
 
             # update policy
             loss_dict = self.alg.update()
@@ -369,7 +370,7 @@ class OnPolicyRunnerResidual:
             # everything else
             self.writer.add_scalar("Train/mean_reward", statistics.mean(locs["rewbuffer"]), locs["it"])
             self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
-            self.writer.add_scalar("Train/rollout_success_rate", locs["rollout_success_rate"], locs["it"])
+            self.writer.add_scalar("Train/rolling_success_rate", locs["rolling_success_rate"], locs["it"])
             if self.logger_type != "wandb":  # wandb does not support non-integer x-axis logging
                 self.writer.add_scalar("Train/mean_reward/time", statistics.mean(locs["rewbuffer"]), self.tot_time)
                 self.writer.add_scalar(
@@ -396,7 +397,7 @@ class OnPolicyRunnerResidual:
                     f"""{'Mean intrinsic reward:':>{pad}} {statistics.mean(locs['irewbuffer']):.2f}\n"""
                 )
             log_string += f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
-            log_string += f"""{'Mean rollout success rate:':>{pad}} {locs['rollout_success_rate']:.2f}\n"""
+            log_string += f"""{'Mean rolling success rate:':>{pad}} {locs['rolling_success_rate']:.2f}\n"""
             # -- episode info
             log_string += f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
         else:

@@ -115,7 +115,7 @@ class XArmCubeResidualStudentEnvCfg(DirectRLEnvCfg):
         ), 
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={ # TODO: change to the initial pose corresponding to teleop initial EE
-                "joint1": 0.0,
+                "joint1": 2*np.pi / 180,
                 "joint2": -np.pi / 4, #-45
                 "joint3": 0.0,
                 "joint4": np.pi / 6, # 30
@@ -216,7 +216,7 @@ class XArmCubeResidualStudentEnvCfg(DirectRLEnvCfg):
     sample_interval = 4 # sample interval for teleop samples # TODO: increase to 5
 
     # -------- initialization --------
-    fingertip_init_pose_10D = [0.2568, 0.005,  0.245, # unit: m         # NOTE: initial fingertip pose in sim & real
+    fingertip_init_pose_10D = [0.2568, 0.0,  0.245, # unit: m         # NOTE: initial fingertip pose in sim & real
                                 1.00, 0.00, 0.00, 0.00, -1.00, 0.00, 
                                 -1.00]                                  # NOTE: 1 = open, -1 = close
     fingertip_lower_limit = [0.15, -0.4, 0.03, 
@@ -240,10 +240,11 @@ class XArmCubeResidualStudentEnvCfg(DirectRLEnvCfg):
     privilege_obs_upper_limit = [1.0, 400.0, float(num_demos), 1.0]
 
     # -------- visualization options -------- 
-    show_camera = True
-    debug_intermediate_values = True
+    show_camera = False
+    debug_intermediate_values = False
     order_demos = False
     reset_on_termination = True
+    log_success_rate = False
 
     # -------- sim2real options -------- 
     store_sim_trajectory = False
@@ -360,7 +361,7 @@ class XArmCubeResidualStudentEnv(DirectRLEnv):
         # -- reset envs that terminated/timed-out and log the episode information
         reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(reset_env_ids) > 0: # NOTE: reset on termination, success, and truncation
-            self._reset_idx(reset_env_ids)
+            self._reset_idx(reset_env_ids) # type: ignore
             # update articulation kinematics
             self.scene.write_data_to_sim()
             self.sim.forward()
@@ -380,12 +381,16 @@ class XArmCubeResidualStudentEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self._compute_intermediate_values()
         success = (self.cube_pos[:,2] > self.cfg.minimum_height)
-        self.extras["success"] = success
+        self.extras["success"] = success.clone()
 
         terminated = self.fingertip_pos[:,2] < 0.02
         terminated |= success
 
         truncated = self.episode_length_buf >= self.max_episode_length - 1
+
+        done = terminated | truncated
+        self.episode_count += (done).long()
+        self.success_count += (success).long()
 
         if self.cfg.store_sim_trajectory:
             if len(self.state_list) > self.cfg.traj_length:
@@ -449,6 +454,11 @@ class XArmCubeResidualStudentEnv(DirectRLEnv):
     
     def _reset_idx(self, env_ids):
         super()._reset_idx(env_ids)
+
+        if self.cfg.log_success_rate and self.episode_count.sum() % self.num_envs == 0 and self.episode_count.sum() > 0 and len(env_ids) > 0:
+            print(f"episode count: {self.episode_count.sum()}")
+            print(f"success count: {self.success_count.sum()}")
+            print(f"overall success rate: {self.success_count.sum().float() / self.episode_count.sum().clamp(min=1).float()}")
         
         # reset time, demo counter, and training traj
         self._reset_buffers(env_ids, self.cfg.augment_real_data)
@@ -616,6 +626,9 @@ class XArmCubeResidualStudentEnv(DirectRLEnv):
             self.depth_list = [] # NOTE: depth list is stored as np arrays
 
             self.residual_list = []
+
+        self.episode_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long) # (num_envs, )
+        self.success_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long) # (num_envs, )
 
     def _init_markers(self):
         frame_marker_cfg = copy.deepcopy(FRAME_MARKER_CFG)

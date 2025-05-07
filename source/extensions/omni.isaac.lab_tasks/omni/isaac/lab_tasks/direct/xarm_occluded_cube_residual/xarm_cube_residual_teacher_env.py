@@ -115,7 +115,7 @@ class XArmCubeResidualTeacherEnvCfg(DirectRLEnvCfg):
         ), 
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={ # TODO: change to the initial pose corresponding to teleop initial EE
-                "joint1": 0.0,
+                "joint1": 2*np.pi / 180,
                 "joint2": -np.pi / 4, #-45
                 "joint3": 0.0,
                 "joint4": np.pi / 6, # 30
@@ -217,7 +217,7 @@ class XArmCubeResidualTeacherEnvCfg(DirectRLEnvCfg):
     sample_interval = 4 # sample interval for teleop samples # TODO: increase to 5
 
     # -------- initialization --------
-    fingertip_init_pose_10D = [0.2568, 0.005,  0.245, # unit: m         # NOTE: initial fingertip pose in sim & real
+    fingertip_init_pose_10D = [0.2568, 0.0,  0.245, # unit: m         # NOTE: initial fingertip pose in sim & real
                                 1.00, 0.00, 0.00, 0.00, -1.00, 0.00, 
                                 -1.00]                                  # NOTE: 1 = open, -1 = close
     fingertip_lower_limit = [0.15, -0.4, 0.03, 
@@ -244,10 +244,11 @@ class XArmCubeResidualTeacherEnvCfg(DirectRLEnvCfg):
     show_camera = False
     debug_intermediate_values = False
     order_demos = False
+    log_success_rate = True
 
     # -------- sim2real options -------- 
     store_sim_trajectory = False
-    storing_path = "RRL/tasks/cube/sim2real/traj4"
+    storing_path = "RRL/tasks/cube/sim2real/traj5"
 
     # -------- rewards --------
     nres_penalty_scale = -1e-2
@@ -372,7 +373,8 @@ class XArmCubeResidualTeacherEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self._compute_intermediate_values()
         success = (self.cube_pos[:,2] > self.cfg.minimum_height)
-        self.extras["success"] = success
+        self.extras["success"] = success.clone()
+        self.ever_success |= success
 
         terminated = self.fingertip_pos[:,2] < 0.02
         terminated |= success
@@ -380,22 +382,22 @@ class XArmCubeResidualTeacherEnv(DirectRLEnv):
         truncated = self.episode_length_buf >= self.max_episode_length - 1
 
         if self.cfg.store_sim_trajectory:
-            if len(self.state_list) > self.cfg.traj_length:
+            if len(self.state_list) >= self.cfg.traj_length + 2:
                 os.makedirs(self.cfg.storing_path, exist_ok=True)
-                state_tensor = torch.stack(self.state_list, dim=0).reshape(-1, 10)
-                torch.save(state_tensor[1:], os.path.join(self.cfg.storing_path, "sim_state_obs.pt"))
-                teleop_tensor = torch.stack(self.teleop_list, dim=0).reshape(-1, 10)
-                torch.save(teleop_tensor[1:], os.path.join(self.cfg.storing_path, "sim_teleop_obs.pt"))
-                cube_tensor = torch.stack(self.cube_list, dim=0).reshape(-1, 9)
-                torch.save(cube_tensor[1:], os.path.join(self.cfg.storing_path, "sim_cube_obs.pt"))
+                state_tensor = torch.stack(self.state_list[2:], dim=0).reshape(-1, 10)
+                torch.save(state_tensor, os.path.join(self.cfg.storing_path, "sim_state_obs.pt"))
+                teleop_tensor = torch.stack(self.teleop_list[2:], dim=0).reshape(-1, self.cfg.num_samples*10)
+                torch.save(teleop_tensor, os.path.join(self.cfg.storing_path, "sim_teleop_obs.pt"))
+                cube_tensor = torch.stack(self.cube_list[2:], dim=0).reshape(-1, 9)
+                torch.save(cube_tensor, os.path.join(self.cfg.storing_path, "sim_cube_obs.pt"))
                 residual_tensor = torch.stack(self.residual_list, dim=0).reshape(-1, 10)
                 torch.save(residual_tensor, os.path.join(self.cfg.storing_path, "sim_residual_output.pt"))
                 if self.cfg.show_camera:
                     depth_array = np.stack(self.depth_list, axis=0) 
                     np.save(os.path.join(self.cfg.storing_path, "sim_depth_obs.npy"), depth_array[3:])
-                print(f"init cube pos: {cube_tensor[1, :3]}")
-                print(f"init robot pos: {state_tensor[1]}")
-                print(f"init teleop pos: {teleop_tensor[1]}")
+                print(f"init cube pos: {cube_tensor[2, :3]}, cube tensor shape: {cube_tensor.shape}")
+                print(f"init robot pos: {state_tensor[2]}, robot tensor shape: {state_tensor.shape}")
+                print(f"init teleop pos: {teleop_tensor[2]}, teleop tensor shape: {teleop_tensor.shape}")
                 print(f"sim data stored at {self.cfg.storing_path}")
                 exit()
 
@@ -442,6 +444,10 @@ class XArmCubeResidualTeacherEnv(DirectRLEnv):
     
     def _reset_idx(self, env_ids):
         super()._reset_idx(env_ids)
+
+        if len(env_ids) > 0 and self.cfg.log_success_rate:
+            print("success rate: ", self.ever_success.float().mean().item())
+            self.ever_success.zero_()
         
         # reset time, demo counter, and training traj
         self._reset_buffers(env_ids, self.cfg.augment_real_data)
@@ -523,9 +529,9 @@ class XArmCubeResidualTeacherEnv(DirectRLEnv):
             
         # -------------------------------- sim2real ------------------------------
         if self.cfg.store_sim_trajectory:
-            self.state_list.append(actor_obs[:,:10].clone())
+            self.state_list.append(self.fingertip_10D.clone())
             self.teleop_list.append(teleop_hist.clone())
-            self.cube_list.append(torch.cat((self.cube_pos, self.cube_orn_6D), dim=-1).clone())
+            self.cube_list.append(torch.cat((self.cube_pos, self.cube_orn_6D), dim=-1))
             if self.cfg.show_camera:
                 self.depth_list.append(depth_noised.detach().cpu().numpy().reshape(120,120))
 
@@ -620,6 +626,8 @@ class XArmCubeResidualTeacherEnv(DirectRLEnv):
             self.depth_list = [] # NOTE: depth list is stored as np arrays
 
             self.residual_list = []
+
+        self.ever_success = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
     def _init_markers(self):
         frame_marker_cfg = copy.deepcopy(FRAME_MARKER_CFG)

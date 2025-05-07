@@ -31,7 +31,7 @@ class XArmResidualCubeStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     policy = RslRlResidualPpoActorCriticCfg(
         class_name="ResidualActorCritic",
         init_logstd=-1.5, 
-        actor_hidden_size=256, # TODO: increase network size
+        actor_hidden_size=256,
         actor_num_layers=2,
         actor_activation="ReLU",
         critic_hidden_size=256,
@@ -53,7 +53,7 @@ class XArmResidualCubeStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         use_clipped_value_loss=True,
         clip_param=0.2,
         entropy_coef=0.0,
-        num_learning_epochs=50,  # can increase
+        num_learning_epochs=75,  # maybe 75?
         num_mini_batches=1,
         learning_rate=3.0e-4,
         schedule= "cosine", 
@@ -128,6 +128,6 @@ class XArmResidualCubeDistillationRunnerCfg(RslRlOnPolicyRunnerCfg):
     algorithm = RslRlDistillationAlgorithmCfg(
         class_name="ResidualDistillation",
         num_learning_epochs=1,
-        gradient_length=15,
-        learning_rate=1e-3,
+        gradient_length=4, # num steps per env / gradient length = num updatres per epoch 
+        learning_rate=5e-4,
     )
