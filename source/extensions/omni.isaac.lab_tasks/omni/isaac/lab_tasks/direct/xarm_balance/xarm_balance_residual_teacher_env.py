@@ -122,13 +122,13 @@ class XArmBalanceResidualTeacherEnvCfg(DirectRLEnvCfg):
                 "joint5": 0.0,
                 "joint6": np.pi / 12 * 5, # 75
                 "joint7": 0.0,
-                "gripper": 0.0, # 0.0 to 1.7
-                "left_driver_joint": 0.0,
-                "left_inner_knuckle_joint": 0.0,
-                "left_finger_joint": 0.0,
-                "right_driver_joint": 0.0,
-                "right_inner_knuckle_joint": 0.0,
-                "right_finger_joint": 0.0,
+                "gripper": 1.6, # 0.0 to 1.7
+                "left_driver_joint": 0.84,
+                "left_inner_knuckle_joint": 0.84,
+                "left_finger_joint": 0.84,
+                "right_driver_joint": 0.84,
+                "right_inner_knuckle_joint": 0.84,
+                "right_finger_joint": 0.84,
             },
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
@@ -152,27 +152,30 @@ class XArmBalanceResidualTeacherEnvCfg(DirectRLEnvCfg):
     )
 
     # assets 
+    quat = quat_from_euler_xyz(torch.tensor(np.pi),torch.tensor(0.0),torch.tensor(np.pi/2))
+    quat = 
     cube = RigidObjectCfg(
             prim_path="/World/envs/env_.*/Cube",
             init_state=RigidObjectCfg.InitialStateCfg(
-                pos=(0.35, 0.0, 0.0),
-                rot=(0, 1, 0, 0),
+                pos=(0.1, 0.0,  0.1),
+                rot=(quat),
             ),
             spawn=sim_utils.UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd", 
-                scale=(0.7, 0.7, 0.7),
+                usd_path=f"/home/shuosha/Desktop/balance_assets/plates/balancing_plate.usd", 
+                scale=(1.0, 1.0, 1.0),
                 rigid_props=RigidBodyPropertiesCfg(
                     solver_position_iteration_count=12,
                     solver_velocity_iteration_count=1,
                     max_angular_velocity=1000.0,
                     max_linear_velocity=1000.0,
                     max_depenetration_velocity=5.0,
-                    disable_gravity=False,
+                    disable_gravity=True,
                     # enable_gyroscopic_forces=True,
                 ),
                 # mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
             ),
         )   
+
     # cameras
     camera = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Robot/link7/cam", # TODO: ADD NOISE
@@ -203,10 +206,10 @@ class XArmBalanceResidualTeacherEnvCfg(DirectRLEnvCfg):
 
     # -------- training options -------- 
     training_data_path = "RRL/tasks/cube/training_set4"
-    enable_residual = True
+    enable_residual = False
     use_privilege_obs = True 
-    apply_dmr = True           
-    augment_real_data = True
+    apply_dmr = False           
+    augment_real_data = False
 
     # -------- training params --------
     traj_length = 400

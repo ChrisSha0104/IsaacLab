@@ -206,6 +206,7 @@ class XArmCubeResidualStudentEnvCfg(DirectRLEnvCfg):
     enable_residual = True
     apply_dmr = True           
     augment_real_data = True
+    reset_on_termination = True
 
     # -------- training params --------
     traj_length = 400
@@ -243,8 +244,7 @@ class XArmCubeResidualStudentEnvCfg(DirectRLEnvCfg):
     show_camera = False
     debug_intermediate_values = False
     order_demos = False
-    reset_on_termination = True
-    log_success_rate = False
+    log_success_rate = True
 
     # -------- sim2real options -------- 
     store_sim_trajectory = False

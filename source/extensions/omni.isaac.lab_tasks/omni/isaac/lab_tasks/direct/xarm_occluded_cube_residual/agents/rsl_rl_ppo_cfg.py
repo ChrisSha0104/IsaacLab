@@ -107,8 +107,8 @@ class XArmResidualCubeVisionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 @configclass
 class XArmResidualCubeDistillationRunnerCfg(RslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 16
-    max_iterations = 1000 
+    num_steps_per_env = 32 # 32
+    max_iterations = 1000  
     save_interval = 50
     experiment_name = "xarm-cube-residual-distill" 
     empirical_normalization = False
@@ -128,6 +128,6 @@ class XArmResidualCubeDistillationRunnerCfg(RslRlOnPolicyRunnerCfg):
     algorithm = RslRlDistillationAlgorithmCfg(
         class_name="ResidualDistillation",
         num_learning_epochs=1,
-        gradient_length=4, # num steps per env / gradient length = num updatres per epoch 
+        gradient_length=32, # num_actions before taking a gradient step
         learning_rate=5e-4,
     )

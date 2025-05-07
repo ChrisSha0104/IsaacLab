@@ -22,7 +22,7 @@ from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import (
 
 
 @configclass
-class XArmResidualCubeStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
+class XArmResidualBalanceStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 400
     max_iterations = 2000 
     save_interval = 2
@@ -64,7 +64,7 @@ class XArmResidualCubeStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 @configclass
-class XArmResidualCubeVisionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+class XArmResidualBalanceVisionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 400 # 64*1024
     max_iterations = 2000 
     save_interval = 2
@@ -106,7 +106,7 @@ class XArmResidualCubeVisionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 @configclass
-class XArmResidualCubeDistillationRunnerCfg(RslRlOnPolicyRunnerCfg):
+class XArmResidualBalanceDistillationRunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 16
     max_iterations = 1000 
     save_interval = 50

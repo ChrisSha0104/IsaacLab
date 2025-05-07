@@ -128,7 +128,7 @@ def main():
         usd_file_name=os.path.basename(dest_path),
         make_instanceable=args_cli.make_instanceable,
         collision_approximation=args_cli.collision_approximation,
-        max_convex_hulls=256,
+        max_convex_hulls=2048,
     )
 
     # Print info

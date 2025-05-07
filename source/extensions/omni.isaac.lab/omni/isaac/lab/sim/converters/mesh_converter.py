@@ -136,8 +136,8 @@ class MeshConverter(AssetConverterBase):
                 if cfg.collision_approximation == "convexDecomposition":
                     physx_convex_api = PhysxSchema.PhysxConvexDecompositionCollisionAPI.Apply(child_mesh_prim)
                     physx_convex_api.GetMaxConvexHullsAttr().Set(cfg.max_convex_hulls)
-                    # physx_convex_api.GetErrorPercentageAttr().Set(0.01)
-                    # physx_convex_api.GetVoxelResolutionAttr().Set(1000000) 
+                    physx_convex_api.GetErrorPercentageAttr().Set(0.0001)
+                    physx_convex_api.GetVoxelResolutionAttr().Set(10000000) 
         # Delete the old Xform and make the new Xform the default prim
         stage.SetDefaultPrim(xform_prim)
         # Apply default Xform rotation to mesh -> enable to set rotation and scale
