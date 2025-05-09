@@ -2,7 +2,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from omni.isaac.lab.utils.math import sample_uniform, euler_xyz_from_quat, quat_from_euler_xyz, quat_from_matrix, subtract_frame_transforms, combine_frame_transforms, quat_mul, matrix_from_quat
+from omni.isaac.lab.utils.math import sample_uniform, euler_xyz_from_quat, quat_from_euler_xyz, quat_from_matrix, subtract_frame_transforms, combine_frame_transforms, quat_mul, matrix_from_quat, quat_inv, quat_conjugate, quat_apply
+from omni.isaac.core.utils.torch.transformations import tf_combine, tf_inverse, tf_vector
 import os
 from typing import Callable
 import math
@@ -966,6 +967,39 @@ def visualize_and_validate_slerp_batch():
 #     qw = world_quat.real
 
 #     return torch.tensor([px, py, pz, qw, qx, qy, qz], device=device)
+
+def compute_offset(pose_A: torch.Tensor, pose_B: torch.Tensor):
+    # Decompose poses
+    pA, qA = pose_A[:, :3], pose_A[:, 3:]  # desired
+    pB, qB = pose_B[:, :3], pose_B[:, 3:]  # actual
+
+    # Inverse of A
+    qA_inv = quat_conjugate(qA)
+    pA_inv = -quat_apply(qA_inv, pA)
+
+    # Compute relative pose (offset): T_offset = T_A^-1 * T_B
+    p_offset = quat_apply(qA_inv, pB) + pA_inv
+    q_offset = quat_mul(qA_inv, qB)
+
+    return p_offset, q_offset
+
+def apply_offset(pose, offset):
+    t, q = pose[:, :3], pose[:, 3:7]
+    t_off, q_off = offset
+    q_combined, t_combined = tf_combine(q, t, q_off, t_off)
+    return torch.cat([t_combined, q_combined], dim=-1)
+
+def remove_offset(pose, offset):
+    t, q = pose[:, :3], pose[:, 3:7]
+    t_off, q_off = offset
+
+    # Invert the offset transform
+    q_off_conj = quat_conjugate(q_off)
+    t_off_inv = -quat_apply(q_off_conj, t_off)
+
+    # Compose: (q, t) * (q_off_inv, t_off_inv)
+    q_combined, t_combined = tf_combine(q, t, q_off_conj, t_off_inv)
+    return torch.cat([t_combined, q_combined], dim=-1)
 
 if __name__ == "__main__":
     visualize_and_validate_slerp_batch()

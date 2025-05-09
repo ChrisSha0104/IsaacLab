@@ -115,8 +115,13 @@ def main():
         rigid_props = None
 
     # Collision properties
-    collision_props = schemas_cfg.CollisionPropertiesCfg(collision_enabled=args_cli.collision_approximation != "none")
+    collision_props = schemas_cfg.CollisionPropertiesCfg(collision_enabled=args_cli.collision_approximation != "none", contact_offset=0.005, rest_offset=0.0)
 
+    # import torch
+    # import numpy as np
+    # from omni.isaac.lab.utils.math import quat_from_euler_xyz
+    # init_quat_plate = quat_from_euler_xyz(torch.tensor(180*np.pi/180),torch.tensor(0*np.pi/180),torch.tensor(-90*np.pi/180))
+    # quat = tuple(init_quat_plate.tolist())
     # Create Mesh converter config
     mesh_converter_cfg = MeshConverterCfg(
         mass_props=mass_props,
@@ -128,7 +133,9 @@ def main():
         usd_file_name=os.path.basename(dest_path),
         make_instanceable=args_cli.make_instanceable,
         collision_approximation=args_cli.collision_approximation,
-        max_convex_hulls=2048,
+        max_convex_hulls=256,
+        # translation=(0.0,  0.0, 0.0),
+        # rotation=(0.0, 1.0, 0.0, 0.0),
     )
 
     # Print info

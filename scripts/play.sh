@@ -11,6 +11,8 @@
 
 
 ### BALANCE ###
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Balance-Teacher --enable_cameras --num_envs 1 --load_run 2025-05-07_02-27-43_state_teacher_retrain_75_epoch_dmr3
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Balance-Teacher --enable_cameras --num_envs 1 --load_run 2025-05-07_02-27-43_state_teacher_retrain_75_epoch_dmr3
 
 
+### INSERTION ###
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Insertion-Teacher --enable_cameras --num_envs 512 --headless --load_run 2025-05-08_19-41-17_insertion_initial_test

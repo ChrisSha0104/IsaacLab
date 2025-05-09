@@ -161,7 +161,7 @@ def main():
             obs, rew, dones, extras = env.step(actions)
 
             i+=1
-            if i == 400 and not hasattr(env.cfg, "reset_on_termination"): 
+            if i == env.cfg.traj_length and not hasattr(env.cfg, "reset_on_termination"): 
                 env.reset()
                 i = 0  
             
