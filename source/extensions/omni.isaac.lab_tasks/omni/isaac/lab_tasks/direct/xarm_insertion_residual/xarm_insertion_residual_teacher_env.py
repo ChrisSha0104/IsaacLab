@@ -73,13 +73,13 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
         ),
         physx=PhysxCfg(
             solver_type=1,
-            max_position_iteration_count=100,  # Important to avoid interpenetration.
+            max_position_iteration_count=80,  # Important to avoid interpenetration.  
             max_velocity_iteration_count=1,
             bounce_threshold_velocity=0.02,
             # friction_offset_threshold=0.01,
             # friction_correlation_distance=0.00625,
-            # gpu_max_rigid_contact_count=2**23,
-            # gpu_max_rigid_patch_count=2**23,
+            gpu_max_rigid_contact_count=2**23,
+            gpu_max_rigid_patch_count=2**23,
             gpu_max_num_partitions=1,  # Important for stable simulation. # NOTE: THIS IS IMPORTANT 
         ),
     )
@@ -107,7 +107,7 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                 enabled_self_collisions=False,      
-                solver_position_iteration_count=60, # TODO: check iteration count
+                solver_position_iteration_count=80, # TODO: check iteration count
                 solver_velocity_iteration_count=1
             ),
             joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="acceleration"),              
@@ -183,20 +183,20 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     nut = RigidObjectCfg(
             prim_path="/World/envs/env_.*/nut",
             init_state=RigidObjectCfg.InitialStateCfg(
-                pos=(0.40, 0.0, 0.),
+                pos=(0.40, 0.0, 0.0),
                 rot=(0,1,0,0),
             ),
             spawn=sim_utils.UsdFileCfg(
                 usd_path=f"/home/shuosha/Desktop/insertion_assets/nut_poly_wide_smooth/nut_poly_wide_smooth.usd", 
                 scale=(1.1, 1.1, 1.1),
                 rigid_props=RigidBodyPropertiesCfg(
-                    solver_position_iteration_count=16,
-                    solver_velocity_iteration_count=8,
+                    solver_position_iteration_count=80,
+                    solver_velocity_iteration_count=1,
                     max_angular_velocity=1000.0,
                     max_linear_velocity=1000.0,
                     angular_damping = 0.3,
                     linear_damping = 0.2,
-                    max_depenetration_velocity=1000.0,
+                    max_depenetration_velocity=5.0,
                     disable_gravity=False,
                     enable_gyroscopic_forces=False,
                     # sleep_threshold=0.005,
@@ -237,13 +237,13 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     # -------- training options -------- 
     training_data_path = "RRL/tasks/insertion/training_set3"
     enable_residual = True
-    apply_dmr = False           
+    apply_dmr = True           
     augment_real_data = False
 
     # -------- training params --------
     traj_length = 350
     num_demos = 20
-    alpha = 0.05    # residual scale
+    alpha = 0.1    # residual scale
     tilde = 1.0     # low pass filter
     num_samples = 3 # number of teleop samples to be used for training
     sample_interval = 5 # sample interval for teleop samples  
@@ -274,7 +274,7 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
 
     # -------- visualization options -------- 
     show_camera = False
-    debug_intermediate_values = False
+    debug_intermediate_values = True
     order_demos = False
     log_success_rate = True
 
@@ -332,9 +332,9 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
 
         self.nut_goal_dist = torch.norm(self.nut_pos - self.intended_goals[:,:3], dim=-1)
 
-        # if self.cfg.debug_intermediate_values:
+        if self.cfg.debug_intermediate_values:
             # self.marker1.visualize(self.fingertip_pos + self.scene.env_origins, self.fingertip_quat)
-            # self.marker2.visualize(self.teleop_fingertip_pos + self.scene.env_origins, self.teleop_fingertip_quat)
+            self.marker2.visualize(self.teleop_fingertip_pos + self.scene.env_origins, self.teleop_fingertip_quat)
             # self.marker3.visualize(self.nut_pos + self.scene.env_origins, self.nut_quat)
             # self.marker4.visualize(self.ee_pos + self.scene.env_origins, self.fingertip_quat)
 
@@ -545,7 +545,7 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
                 self.episode_length_buf.float().unsqueeze(-1),
                 self.demo_idx.float().unsqueeze(-1),
                 reached_nut.unsqueeze(-1),
-                self.intended_goals,
+                self.intended_goals, #TODO: normalize
             ),
             dim=-1,
         )
@@ -962,6 +962,8 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
 
         # compute intended goals
         self.intended_goals = self.detect_goal_from_gripper_release_9d(self.training_demo_traj[env_ids, self.demo_idx[env_ids]], self.insertion_goals, env_ids)
+        # if self.cfg.debug_intermediate_values:
+        #     self.marker5.visualize(self.intended_goals[:,:3] + self.scene.env_origins[env_ids,:3], self.intended_goals[:,3:7]) # visualize nut pick up pose
 
         # reset teleop hist and initialize with initial pose
         self.teleop_hist.initialize(initial_fingertip.clone()[env_ids], env_ids=env_ids) # (num_envs, 10)

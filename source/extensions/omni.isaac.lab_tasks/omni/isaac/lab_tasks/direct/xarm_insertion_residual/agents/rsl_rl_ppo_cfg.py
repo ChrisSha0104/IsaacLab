@@ -30,7 +30,7 @@ class XArmResidualInsertionStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     empirical_normalization = False
     policy = RslRlResidualPpoActorCriticCfg(
         class_name="ResidualActorCritic",
-        init_logstd=-3.5, 
+        init_logstd=-2.0, 
         actor_hidden_size=256,
         actor_num_layers=2,
         actor_activation="ReLU",
@@ -53,7 +53,7 @@ class XArmResidualInsertionStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         use_clipped_value_loss=True,
         clip_param=0.2,
         entropy_coef=0.0,
-        num_learning_epochs=100,
+        num_learning_epochs=50,
         num_mini_batches=1,
         learning_rate=3.0e-4,
         schedule= "cosine", 
@@ -76,7 +76,7 @@ class XArmResidualCubeVisionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         actor_hidden_size=512,
         actor_num_layers=2,
         actor_activation="ReLU",
-        critic_hidden_size=512,
+        critic_hidden_size=256,
         critic_num_layers=2,
         critic_activation="ReLU",
         action_head_std=0.0,
@@ -106,11 +106,11 @@ class XArmResidualCubeVisionPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 @configclass
-class XArmResidualCubeDistillationRunnerCfg(RslRlOnPolicyRunnerCfg):
+class XArmResidualInsertionDistillationRunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 32 # 32
     max_iterations = 1000  
     save_interval = 50
-    experiment_name = "xarm-cube-residual-distill" 
+    experiment_name = "xarm-insertion-residual-distill" 
     empirical_normalization = False
     policy = RslRlResidualDistillationStudentTeacherCfg(
         class_name="ResidualStudentTeacher",
