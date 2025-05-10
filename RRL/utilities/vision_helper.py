@@ -47,8 +47,8 @@ def make_box_mask(N: int, H: int, W: int,
     return mask2d.view(N, H*W).to(device)
 
 def add_noise_in_depth_band(depth: torch.Tensor,
-                            min_d: float = 0.110,
-                            max_d: float = 0.19,
+                            min_d: float = 0.10,
+                            max_d: float = 0.25,
                             mean: float = 0.0,
                             std: float = 0.01,
                             clip_min: float = 0.1,
