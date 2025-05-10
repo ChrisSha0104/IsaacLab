@@ -15,4 +15,4 @@
 
 
 ### INSERTION ###
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Insertion-Teacher --enable_cameras --num_envs 1024 --headless --load_run 2025-05-09_19-24-05_insertion_tuned_physics
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Insertion-Teacher --enable_cameras --num_envs 20 --load_run 2025-05-09_22-46-57_insertion_tuned_physics_v3

@@ -8,5 +8,5 @@
 # ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Cube-Teacher --num_envs 1024 --headless --run_name state_teacher_retrain_75_epoch_dmr3
 
 ### INSERTION ###
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 1024 --headless --run_name insertion_tuned_physics_v3 --max_iterations 5000 
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 512 --headless --run_name insertion_phase1_no_augmentation --max_iterations 5000 
 
