@@ -23,14 +23,14 @@ from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import (
 
 @configclass
 class XArmResidualInsertionStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 600
+    num_steps_per_env = 350
     max_iterations = 5000 
-    save_interval = 5
+    save_interval = 10
     experiment_name = "xarm-insertion-residual-state" 
     empirical_normalization = False
     policy = RslRlResidualPpoActorCriticCfg(
         class_name="ResidualActorCritic",
-        init_logstd=-2.0, 
+        init_logstd=-3.5, 
         actor_hidden_size=256,
         actor_num_layers=2,
         actor_activation="ReLU",

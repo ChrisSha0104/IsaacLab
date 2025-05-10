@@ -115,7 +115,7 @@ def main():
         rigid_props = None
 
     # Collision properties
-    collision_props = schemas_cfg.CollisionPropertiesCfg(collision_enabled=args_cli.collision_approximation != "none", contact_offset=0.005, rest_offset=0.0)
+    collision_props = schemas_cfg.CollisionPropertiesCfg(collision_enabled=args_cli.collision_approximation != "none", contact_offset=0.001, rest_offset=0.0)
 
     # import torch
     # import numpy as np
@@ -133,7 +133,7 @@ def main():
         usd_file_name=os.path.basename(dest_path),
         make_instanceable=args_cli.make_instanceable,
         collision_approximation=args_cli.collision_approximation,
-        max_convex_hulls=256,
+        max_convex_hulls=32,
         # translation=(0.0,  0.0, 0.0),
         # rotation=(0.0, 1.0, 0.0, 0.0),
     )
