@@ -213,7 +213,7 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     training_data_path = "RRL/tasks/insertion/training_set4"
     enable_residual = True
     apply_dmr = True           
-    augment_real_data = True
+    augment_real_data = False
 
     # -------- training params --------
     traj_length = 350
@@ -543,6 +543,7 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
             self.base_pos,
             self.base_orn_6D,
         ), dim=-1)
+
         privilege_obs = torch.cat((
             self.keypoint_goal,
             fingertip_nut_dist.unsqueeze(-1),
@@ -890,8 +891,8 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         if apply_dmr:
             nut_root[env_ids,0] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #x 
             nut_root[env_ids,1] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #y
-            base_root[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x
-            base_root[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
+            base_root[env_ids,0] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #x
+            base_root[env_ids,1] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #y
 
         nut_root[env_ids,:3] = torch.clamp(nut_root[env_ids,:3], self.nut_low[env_ids,:3], self.nut_high[env_ids,:3])
         nut_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]

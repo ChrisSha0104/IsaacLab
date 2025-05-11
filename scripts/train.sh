@@ -21,7 +21,7 @@
 
 
 # phase 1
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 1 --run_name insertion_all_together_small_dmr
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 1024 --headless --run_name insertion_dmr_no_aug
 
 # phase 2
 # ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 1024 --headless --run_name insertion_phase2_dmr --load_run 2025-05-10_02-43-06_insertion_phase1_raw80 --resume True --max_iterations 5000 
