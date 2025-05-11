@@ -213,14 +213,14 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     training_data_path = "RRL/tasks/insertion/training_set4"
     enable_residual = True
     apply_dmr = True           
-    augment_real_data = True
+    augment_real_data = False
 
     # -------- training params --------
     traj_length = 350
     num_demos = 50
     alpha = 0.1                 # residual scale
     num_samples = 3             # number of teleop samples to be used for training
-    sample_interval = 5         # sample interval for teleop samples (NOTE: dt = 1/30)
+    sample_interval = 3         # sample interval for teleop samples            (NOTE: dt = 1/30)
 
     # -------- initialization --------
     # state normalization
@@ -872,10 +872,10 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         base_root[env_ids,2] += 0.008
 
         if apply_dmr:
-            nut_root[env_ids,0] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #x 
-            nut_root[env_ids,1] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #y
-            base_root[env_ids,0] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #x
-            base_root[env_ids,1] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #y
+            nut_root[env_ids,0] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #x 
+            nut_root[env_ids,1] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #y
+            base_root[env_ids,0] += sample_uniform(-0.005, 0.005, len(env_ids), self.device) #x
+            base_root[env_ids,1] += sample_uniform(-0.005, 0.005, len(env_ids), self.device) #y
 
         nut_root[env_ids,:3] = torch.clamp(nut_root[env_ids,:3], self.nut_low[env_ids,:3], self.nut_high[env_ids,:3])
         nut_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
