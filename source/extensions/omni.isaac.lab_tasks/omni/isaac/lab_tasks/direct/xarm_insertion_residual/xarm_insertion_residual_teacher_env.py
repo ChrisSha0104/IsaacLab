@@ -74,6 +74,8 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
             max_position_iteration_count=80,  # Important to avoid interpenetration.  
             max_velocity_iteration_count=1,
             bounce_threshold_velocity=0.02,
+            # gpu_found_lost_pairs_capacity=2**27,
+            # gpu_found_lost_aggregate_pairs_capacity=2**27,
             gpu_max_rigid_contact_count=2**23,
             gpu_max_rigid_patch_count=2**23,
             gpu_max_num_partitions=1,  # Important for stable simulation. # NOTE: THIS IS IMPORTANT 
@@ -87,7 +89,7 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     robot = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path="RRL/robot/sapien_xarm7/xarm_urdf/xarm7_gripper.usd",
+            usd_path="RRL/assets/robot/sapien_xarm7/xarm_urdf/xarm7_gripper.usd",
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
@@ -208,14 +210,14 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     )
 
     # -------- training options -------- 
-    training_data_path = "RRL/tasks/insertion/training_set3"
+    training_data_path = "RRL/tasks/insertion/training_set4"
     enable_residual = True
     apply_dmr = True           
     augment_real_data = True
 
     # -------- training params --------
     traj_length = 350
-    num_demos = 20
+    num_demos = 50
     alpha = 0.1                 # residual scale
     num_samples = 3             # number of teleop samples to be used for training
     sample_interval = 5         # sample interval for teleop samples (NOTE: dt = 1/30)
@@ -260,8 +262,8 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     storing_path = "RRL/tasks/nut/sim2real/traj1"
 
     # -------- rewards --------
-    nres_penalty_scale = -1e-2
-    nres_rate_scale = -1e-4
+    nres_penalty_scale = -1e-3
+    nres_rate_scale = -1e-5
     completion_reward_scale = 10.0
 
 class XArmInsertionResidualTeacherEnv(DirectRLEnv):
@@ -541,7 +543,7 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         normalized_base_obs = self.base_normalizer.normalize(base_obs)
         normalized_privledge_obs = self.privilege_obs_normalizer.normalize(privilege_obs)
         noramlized_intention_obs = self.intended_goal_binary.unsqueeze(-1)
-        normalized_actor_obs = torch.cat((normalized_state_obs, normalized_nut_obs, normalized_privledge_obs), dim=-1)
+        normalized_actor_obs = torch.cat((normalized_state_obs, normalized_nut_obs, normalized_base_obs, normalized_privledge_obs, noramlized_intention_obs), dim=-1)
 
         # -------------------------------- sim2real ------------------------------
         if self.cfg.store_sim_trajectory:
@@ -674,16 +676,12 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         all_demos = []
 
         for i in range(1, num_demos+1):
-            traj: torch.Tensor = torch.load(os.path.join(dir, f"demo_traj{i}.pt"), weights_only=True).to(device=self.device).unsqueeze(0)                      # (1, traj_length, action_dim)
-            traj = traj.repeat(self.num_envs, 1, 1)                                                                                         # (num_envs, traj_length, action_dim)
-            if traj.shape[1] > self.traj_length:
-                traj = traj[:,:self.traj_length,:]                                                                                      # (num_envs, traj_length, action_dim)
-            else:
-                traj = torch.cat((init_pos.unsqueeze(1).repeat(1, self.traj_length - traj.shape[1], 1), traj), dim=1)                      # (num_envs, traj_length, action_dim)
-            # traj = resample_trajectory_10d(traj, self.traj_length, 10)                                                   # (num_envs, traj_length, action_dim)
-            traj[..., -1] = torch.where(traj[..., -1] < 0.5, 
-                                        torch.tensor(-1.0, device=traj[..., -1].device),     # open 
-                                        torch.tensor(1.0, device=traj[..., -1].device))    # closed
+            traj: torch.Tensor = torch.load(os.path.join(dir, f"demo_traj{i}.pt"), weights_only=True).to(device=self.device).unsqueeze(0)                       # (1, traj_length, action_dim)
+            traj = traj.repeat(self.num_envs, 1, 1)                                                                                                             # (num_envs, traj_length, action_dim)
+            traj = resample_trajectory_10d(traj, self.traj_length, 10)                                                                                          # (num_envs, traj_length, action_dim)
+            traj[..., -1] = torch.where(traj[..., -1] > 0.0, 
+                                        torch.tensor(1.0, device=traj[..., -1].device),     # open 
+                                        torch.tensor(-1.0, device=traj[..., -1].device))    # closed
             all_demos.append(traj)
 
         return torch.stack(all_demos, dim=1) # (num_envs, num_demos, traj_length, action_dim)
@@ -722,7 +720,7 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         orient_6d = quat_to_6d(fingertip_quat_b)
 
         finger_qpos = self._robot.data.joint_pos[:,7:8]#torch.mean(self._robot.data.joint_pos[:,7:], dim=1).unsqueeze(1) # TODO check mean here
-        binary_gripper = torch.where(finger_qpos >= 0.5, 
+        binary_gripper = torch.where(finger_qpos >= 0.5, # = 0.25 for regular finger joints
                                      torch.tensor(1.0, device=finger_qpos.device), 
                                      torch.tensor(-1.0, device=finger_qpos.device))   # convert gripper qpos to binary
 
@@ -790,7 +788,7 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
             max_joint_delta  = delta[:, :7].abs().max(dim=1).values  # (E,)
 
             # 2) find which envs exceed the threshold
-            max_delta_norm = 0.10
+            max_delta_norm = 0.20
             mask = joint_delta_norm > max_delta_norm                # (E,) bool
 
             # # 3) optional logging for the offending envs
@@ -829,8 +827,8 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         if apply_dmr:
             # print("Applying DMR")
             joint_pos[:,:7] += sample_uniform( 
-                                -0.08,
-                                0.08,
+                                -0.125,
+                                0.125,
                                 (len(env_ids), 7),
                                 self.device,
                             )
@@ -862,7 +860,7 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
     def _reset_assets(self, env_ids, apply_dmr=False):
         nut_root = self._nut.data.default_root_state.clone() # (num_envs, 13)
         pick_up_pose_10D = self._get_nut_pick_up_poses(self.training_demo_traj[env_ids, self.demo_idx[env_ids]]) # (env_ids, 10)
-        nut_root[env_ids,:3] = pick_up_pose_10D.clone()[:,:3] + self.scene.env_origins[env_ids,:3]
+        nut_root[env_ids,:3] = pick_up_pose_10D.clone()[:,:3] 
         nut_root[env_ids,3:7] = quat_from_6d(pick_up_pose_10D.clone()[:,3:9])
         nut_root[env_ids, 2] += 0.01
 
@@ -871,18 +869,20 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         #     self.marker7.visualize(nut_root[:,:3] + self.scene.env_origins, nut_root[:,3:7]) # visualize nut pick up pose
 
         base_root = self._base.data.default_root_state.clone()
-        base_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
-        base_root[env_ids,2] += 0.003
+        base_root[env_ids,2] += 0.008
 
         if apply_dmr:
-            nut_root[env_ids,0] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #x 
-            nut_root[env_ids,1] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #y
-            base_root[env_ids,0] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #x
-            base_root[env_ids,1] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #y
+            nut_root[env_ids,0] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #x 
+            nut_root[env_ids,1] += sample_uniform(-0.02, 0.02, len(env_ids), self.device) #y
+            base_root[env_ids,0] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #x
+            base_root[env_ids,1] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #y
 
         nut_root[env_ids,:3] = torch.clamp(nut_root[env_ids,:3], self.nut_low[env_ids,:3], self.nut_high[env_ids,:3])
+        nut_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
+
         base_root[env_ids,:3] = torch.clamp(base_root[env_ids,:3], self.base_low[env_ids,:3], self.base_high[env_ids,:3])
-        
+        base_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
+
         self._nut.write_root_state_to_sim(root_state=nut_root, env_ids=env_ids) #NOTE: no render on reset
         self._nut.reset(env_ids)
         self._base.write_root_state_to_sim(root_state=base_root, env_ids=env_ids) #NOTE: no render on reset
@@ -899,17 +899,17 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
             self.training_demo_traj = self.clean_demo_trajs
         else:
             # 1) sample burst [s,e]
-            min_len, max_len = 10, self.cfg.traj_length // 2
+            min_len, max_len = 30, self.cfg.traj_length // 7
             length      = int(torch.randint(min_len, max_len+1, (1,), device=self.device).item())
             noise_start = int(torch.randint(0, self.traj_length - length + 1, (1,), device=self.device).item())
             noise_end   = noise_start + length - 1
 
             # 2) sample noise params
-            noise_level = float(torch.rand(1).item() * (0.04 - 0.02) + 0.02)  # smaller
-            beta_filter = float(torch.rand(1).item() * (0.9 - 0.5) + 0.5)     # stays <1
+            noise_level = float(torch.rand(1).item() * (0.03 - 0.02) + 0.02)  # smaller
+            beta_filter = float(torch.rand(1).item() * (0.9 - 0.7) + 0.7)     # stays <1
 
             # 3) sample step_interval ∈ [5,30] but ≤ length
-            low, high = 10, 30
+            low, high = 20, 40
             hi = min(high, length)
             lo = low if length >= low else 1
             step_interval = int(torch.randint(lo, hi+1, (1,), device=self.device).item())
@@ -927,9 +927,9 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         # ee after dmr
         initial_fingertip = self.fingertip_10D.clone() # (num_envs, 10)
         # interpolated from randomized ee to demo traj            
-        initial_traj = interpolate_10d_ee_trajectory(initial_fingertip[env_ids], self.training_demo_traj[env_ids, self.demo_idx[env_ids], 20, :], 20) # (env_ids, 1, 20, 10)
+        initial_traj = interpolate_10d_ee_trajectory(initial_fingertip[env_ids], self.training_demo_traj[env_ids, self.demo_idx[env_ids], 30, :], 30) # (env_ids, 1, 30, 10)
         # fill in initial traj
-        self.training_demo_traj[env_ids, self.demo_idx[env_ids], :20, :] = initial_traj.clone()
+        self.training_demo_traj[env_ids, self.demo_idx[env_ids], :30, :] = initial_traj.clone()
 
         # compute intended goals
         self.intended_goal_binary = self.detect_goal_from_gripper_release_binary(self.training_demo_traj[env_ids, self.demo_idx[env_ids]], self.insertion_goals)

@@ -87,7 +87,7 @@ class XArmInsertionResidualStudentEnvCfg(DirectRLEnvCfg):
     robot = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path="RRL/robot/sapien_xarm7/xarm_urdf/xarm7_gripper.usd",
+            usd_path="RRL/assets/robot/sapien_xarm7/xarm_urdf/xarm7_gripper.usd",
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
@@ -144,7 +144,7 @@ class XArmInsertionResidualStudentEnvCfg(DirectRLEnvCfg):
                 rot=(quat),
             ),
             spawn=sim_utils.UsdFileCfg(
-                usd_path=f"/home/shuosha/Desktop/insertion_assets/base_smooth/insertion_base_smooth.usd", 
+                usd_path=f"RRL/assets/insertion_assets/base_smooth/insertion_base_smooth.usd", 
                 scale=(0.80, 0.80, 0.80),
                 rigid_props=RigidBodyPropertiesCfg(
                     max_depenetration_velocity=1000.0,
@@ -165,7 +165,7 @@ class XArmInsertionResidualStudentEnvCfg(DirectRLEnvCfg):
                 rot=(0,1,0,0),
             ),
             spawn=sim_utils.UsdFileCfg(
-                usd_path=f"/home/shuosha/Desktop/insertion_assets/nut_poly_wide_smooth/nut_poly_wide_smooth.usd", 
+                usd_path=f"RRL/assets/insertion_assets/nut_poly_wide_smooth/nut_poly_wide_smooth.usd", 
                 scale=(1.1, 1.1, 1.1),
                 rigid_props=RigidBodyPropertiesCfg(
                     solver_position_iteration_count=80,

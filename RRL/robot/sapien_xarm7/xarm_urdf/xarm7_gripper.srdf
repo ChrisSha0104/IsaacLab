@@ -1,4 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<robot name="xarm7">
-  <disable_collisions link1="xarm_gripper_base_link" link2="link7" reason="Default" />
-</robot>

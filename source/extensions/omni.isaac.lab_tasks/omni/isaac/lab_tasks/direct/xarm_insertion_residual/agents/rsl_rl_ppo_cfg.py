@@ -31,10 +31,10 @@ class XArmResidualInsertionStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     policy = RslRlResidualPpoActorCriticCfg(
         class_name="ResidualActorCritic",
         init_logstd=-1.5, 
-        actor_hidden_size=256,
+        actor_hidden_size=512,
         actor_num_layers=2,
         actor_activation="ReLU",
-        critic_hidden_size=256,
+        critic_hidden_size=512,
         critic_num_layers=2,
         critic_activation="ReLU",
         action_head_std=0.0,
