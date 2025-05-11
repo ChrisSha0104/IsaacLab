@@ -213,7 +213,7 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     training_data_path = "RRL/tasks/insertion/training_set4"
     enable_residual = True
     apply_dmr = True           
-    augment_real_data = False
+    augment_real_data = True
 
     # -------- training params --------
     traj_length = 350
@@ -237,19 +237,30 @@ class XArmInsertionResidualTeacherEnvCfg(DirectRLEnvCfg):
     state_obs_upper_limit = fingertip_upper_limit * (num_samples+1) 
 
     # privilaged obs normalization
-    nut_lower_limit = [0.30, -0.1, 0.0, 
+    nut_lower_limit = [0.30, -0.2, 0.0, 
                         -1.05, -1.05, -1.05, -1.05, -1.05, -1.05]
-    nut_upper_limit = [0.50, 0.1, 0.4, # 55 - 45
+    nut_upper_limit = [0.50, 0.2, 0.4, # 55 - 45
                         1.05, 1.05, 1.05, 1.05, 1.05, 1.05]
     base_lower_limit = [0.20, -0.05, 0.0,
                         -1.05, -1.05, -1.05, -1.05, -1.05, -1.05]
-    base_upper_limit = [0.30, 0.05, 0.05,
+    base_upper_limit = [0.30, 0.05, 0.1,
                         1.05, 1.05, 1.05, 1.05, 1.05, 1.05]
-    privilege_obs_lower_limit = [0.0, # fingertip nut dist
-                                 0.0, # episode length
-                                 0.0, # demo idx
-                                 0.0] # reached nut
-    privilege_obs_upper_limit = [1.0, 350.0, float(num_demos), 1.0]
+    privilege_obs_lower_limit = [0.20, -0.05, 0.0,
+                                -1.05, -1.05, -1.05, -1.05, -1.05, -1.05,
+                                0.0, # fingertip nut dist
+                                0.0, # fingertip goal dist
+                                0.0, # nut goal dist
+                                0.0, # episode length
+                                0.0, # demo idx
+                                0.0] # reached nut
+    privilege_obs_upper_limit = [0.30, 0.05, 0.1,
+                                1.05, 1.05, 1.05, 1.05, 1.05, 1.05,
+                                1.0,
+                                1.0,
+                                1.0, 
+                                350.0, 
+                                float(num_demos), 
+                                1.0]
 
     # -------- visualization options -------- 
     show_camera = False
@@ -316,9 +327,9 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
 
         self.nut_goal_dist = torch.norm(self.nut_pos - self.intended_goal_pose[:,:3], dim=-1)
 
-        if self.cfg.debug_intermediate_values:
+        # if self.cfg.debug_intermediate_values:
             # self.marker1.visualize(self.fingertip_pos + self.scene.env_origins, self.fingertip_quat)
-            self.marker2.visualize(self.teleop_fingertip_pos + self.scene.env_origins, self.teleop_fingertip_quat)
+            # self.marker2.visualize(self.teleop_fingertip_pos + self.scene.env_origins, self.teleop_fingertip_quat)
             # self.marker3.visualize(self.nut_pos + self.scene.env_origins, self.nut_quat)
             # self.marker4.visualize(self.ee_pos + self.scene.env_origins, self.fingertip_quat)
 
@@ -512,6 +523,8 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         self.teleop_hist.append(self.teleop_fingertip_10D.clone())
         teleop_hist = self.teleop_hist.get_history()                    # (num_envs, num_samples * 10)
         fingertip_nut_dist = torch.norm(self.fingertip_pos - self.nut_pos, dim=-1)
+        fingertip_goal_dist = torch.norm(self.fingertip_pos - self.keypoint_goal[:,:3], dim=-1)
+        nut_goal_dist = torch.norm(self.nut_pos - self.keypoint_goal[:,:3], dim=-1)
         reached_nut = torch.where((fingertip_nut_dist < 0.05), 1.0, 0.0)
 
         state_obs = torch.cat((
@@ -530,9 +543,11 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
             self.base_pos,
             self.base_orn_6D,
         ), dim=-1)
-
         privilege_obs = torch.cat((
+            self.keypoint_goal,
             fingertip_nut_dist.unsqueeze(-1),
+            fingertip_goal_dist.unsqueeze(-1),
+            nut_goal_dist.unsqueeze(-1),
             self.episode_length_buf.float().unsqueeze(-1),
             self.demo_idx.float().unsqueeze(-1),
             reached_nut.unsqueeze(-1),
@@ -647,10 +662,11 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
 
         self.ever_success = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
-        right_goal = torch.tensor([[0.25, -0.05, 0.02, 1.00, 0.00, 0.00, 0.00, -1.00, 0.00]], device=self.device)
-        left_goal = torch.tensor([[0.25, 0.05, 0.02, 1.00, 0.00, 0.00, 0.00, -1.00, 0.00]], device=self.device)
-        self.insertion_goals = torch.cat((right_goal, left_goal), dim=0) #(2, 9)
+        self.right_goal = torch.tensor([[0.25, -0.05, 0.02, 1.00, 0.00, 0.00, 0.00, -1.00, 0.00]], device=self.device).repeat(self.num_envs, 1)
+        self.left_goal = torch.tensor([[0.25, 0.05, 0.02, 1.00, 0.00, 0.00, 0.00, -1.00, 0.00]], device=self.device).repeat(self.num_envs, 1)
+        self.insertion_goals = torch.stack((self.right_goal, self.left_goal), dim=1) #(2, 9)
         self.intended_goal_pose = torch.zeros((self.num_envs, 9), device=self.device)
+        self.keypoint_goal = torch.zeros((self.num_envs, 9), device=self.device)
 
         self.nut_offset = torch.tensor([[-0.0855, -0.0257,  0.0150]], device=self.device).repeat(self.num_envs, 1), torch.tensor([[0.9728, 0.0012, 0.0027, 0.2314]], device=self.device).repeat(self.num_envs, 1) # (num_envs, 4)
         self.base_offset = torch.tensor([[0.0561, -0.0354,  0.0072]], device=self.device).repeat(self.num_envs, 1), torch.tensor([[1.0000e+00, 1.5101e-04, 2.4878e-04, 3.2966e-05]], device=self.device).repeat(self.num_envs, 1) # (num_envs, 4)
@@ -869,18 +885,26 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         #     self.marker7.visualize(nut_root[:,:3] + self.scene.env_origins, nut_root[:,3:7]) # visualize nut pick up pose
 
         base_root = self._base.data.default_root_state.clone()
-        base_root[env_ids,2] += 0.008
+        base_root[env_ids, 2] += 0.001
 
         if apply_dmr:
             nut_root[env_ids,0] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #x 
             nut_root[env_ids,1] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #y
-            base_root[env_ids,0] += sample_uniform(-0.005, 0.005, len(env_ids), self.device) #x
-            base_root[env_ids,1] += sample_uniform(-0.005, 0.005, len(env_ids), self.device) #y
+            base_root[env_ids,0] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #x
+            base_root[env_ids,1] += sample_uniform(-0.05, 0.05, len(env_ids), self.device) #y
 
         nut_root[env_ids,:3] = torch.clamp(nut_root[env_ids,:3], self.nut_low[env_ids,:3], self.nut_high[env_ids,:3])
         nut_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
 
         base_root[env_ids,:3] = torch.clamp(base_root[env_ids,:3], self.base_low[env_ids,:3], self.base_high[env_ids,:3])
+
+
+        self.right_goal[env_ids, :2] = base_root[env_ids,:2].clone() 
+        self.right_goal[env_ids, 1] += -0.044
+        self.left_goal[env_ids, :2] = base_root[env_ids,:2].clone()
+        self.left_goal[env_ids, 1] += 0.044
+        self.insertion_goals = torch.stack((self.right_goal, self.left_goal), dim=1) #(num_envs, 2, 9)
+
         base_root[env_ids,:3] += self.scene.env_origins[env_ids,:3]
 
         self._nut.write_root_state_to_sim(root_state=nut_root, env_ids=env_ids) #NOTE: no render on reset
@@ -932,11 +956,13 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         self.training_demo_traj[env_ids, self.demo_idx[env_ids], :30, :] = initial_traj.clone()
 
         # compute intended goals
-        self.intended_goal_binary = self.detect_goal_from_gripper_release_binary(self.training_demo_traj[env_ids, self.demo_idx[env_ids]], self.insertion_goals)
-        self.intended_goal_pose = self.insertion_goals.clone()[self.intended_goal_binary.long()] # (num_envs, 9)
+        self.intended_goal_binary = self.detect_goal_from_gripper_release_binary(self.training_demo_traj[env_ids, self.demo_idx[env_ids]], self.insertion_goals[env_ids])
+        self.intended_goal_pose = self.insertion_goals.clone()[env_ids, self.intended_goal_binary.long()] # (num_envs, 9)
+        self.keypoint_goal = self.intended_goal_pose.clone()
+        self.keypoint_goal[:, 2] = 0.06
 
-        if self.cfg.debug_intermediate_values:
-            self.marker5.visualize(self.intended_goal_pose[:,:3] + self.scene.env_origins[env_ids,:3], self.intended_goal_pose[:,3:7]) # visualize nut pick up pose
+        # if self.cfg.debug_intermediate_values:
+        #     self.marker5.visualize(self.keypoint_goal[env_ids,:3] + self.scene.env_origins[env_ids,:3], quat_from_6d(self.keypoint_goal[env_ids,3:9])) # visualize nut pick up pose
 
         # reset teleop hist and initialize with initial pose
         self.teleop_hist.initialize(initial_fingertip.clone()[env_ids], env_ids=env_ids) # (num_envs, 10)
@@ -966,45 +992,63 @@ class XArmInsertionResidualTeacherEnv(DirectRLEnv):
         """
         Args:
             trajectories: Tensor of shape (num_envs, timesteps, action_dim)
-            goals: Tensor of shape (2, 9) — [x, y, z, 6D orientation]
-            env_ids: Optional (num_selected_envs,) — indices of environments to compute
+            goals:        Tensor of shape (num_envs, 2, 9) — for each env, two 9-D goal poses
+            env_ids:      Optional (num_selected_envs,) — indices of envs to compute
 
         Returns:
             Tensor of shape (num_envs,), containing:
-            - 0 for envs where release was closer to goals[0]
-            - 1 for closer to goals[1]
-            - -1 if no release happened
+            - 0 if release is closer to goals[e,0]
+            - 1 if closer to goals[e,1]
+            - -1 if no release happened in that env
         """
-        num_envs, timesteps, action_dim = trajectories.shape
-        gripper_action = trajectories[..., -1]  # (num_envs, timesteps)
+        num_envs, T, D = trajectories.shape
+        # gripper action is the last entry in each action vector
+        gripper = trajectories[..., -1]  # (num_envs, T)
 
         if env_ids is None:
             env_ids = torch.arange(num_envs, device=trajectories.device)
 
-        selected_gripper = gripper_action[env_ids]       # (N, T)
-        selected_actions = trajectories[env_ids]         # (N, T, D)
+        # pick out the selected envs
+        g = gripper[env_ids]           # (N, T)
+        a = trajectories[env_ids]      # (N, T, D)
 
-        # Detect release transition: 1 → -1
-        gripper_prev = selected_gripper[:, :-1]
-        gripper_next = selected_gripper[:, 1:]
-        release_mask = (gripper_prev == 1) & (gripper_next == -1)
-        release_idx = torch.argmax(release_mask.int(), dim=1)  # (N,)
-        has_release = release_mask.any(dim=1)
+        # detect a 1→-1 transition
+        prev = g[:, :-1]
+        nxt  = g[:, 1:]
+        mask = (prev == 1) & (nxt == -1)   # (N, T-1)
+        has  = mask.any(dim=1)             # (N,)
+        # for envs with at least one release, take first index
+        idxs = torch.where(
+            has,
+            mask.float().argmax(dim=1).long(),
+            torch.zeros_like(has, dtype=torch.long)
+        )  # (N,)
 
-        # Position at release
-        release_pos = selected_actions[torch.arange(env_ids.shape[0]), release_idx, :3]  # (N, 3)
+        # get release positions
+        release_pos = a[torch.arange(env_ids.size(0), device=a.device), idxs, :3]  # (N, 3)
 
-        goal_positions = goals[:, :3]  # (2, 3)
-        dists = torch.norm(release_pos[:, None, :] - goal_positions[None, :, :], dim=-1)  # (N, 2)
-        closer_to_goal0 = dists[:, 0] < dists[:, 1]  # (N,)
+        # get each env's two goal positions
+        goal_pos = goals[env_ids, :, :3]  # (N, 2, 3)
 
+        # compute N×2 distances
+        dists = torch.norm(release_pos.unsqueeze(1) - goal_pos, dim=-1)  # (N, 2)
+        closer0 = dists[:, 0] < dists[:, 1]                               # (N,)
+
+        # build final result (initialized to -1)
         result = -1 * torch.ones(num_envs, device=trajectories.device, dtype=torch.long)
-        result[env_ids[has_release]] = torch.where(closer_to_goal0[has_release], 0, 1)
+        # write only for envs that had a release
+        picked = env_ids[has]
+        result[picked] = torch.where(
+            closer0[has],
+            torch.zeros_like(idxs[has]),
+            torch.ones_like(idxs[has])
+        )
 
         if (result == -1).any():
             print("[Warning] Some environments had no gripper release — result contains -1s")
 
         return result.float()
+
 
     
     def detect_goal_from_gripper_release_9d(
