@@ -21,7 +21,10 @@
 
 
 # phase 1
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 1024 --headless --run_name insertion_dmr_no_aug
+CUDA_VISIBLE_DEVICES=0 ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 1024 --headless --run_name insertion_keypoint_alpha0.2
+
+# CUDA_VISIBLE_DEVICES=1 ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 1024 --headless --run_name insertion_keypoint_alpha0.1
+
 
 # phase 2
 # ./isaaclab.sh -p source/standalone/workflows/rsl_rl/train_rp.py --task XArm-Residual-Insertion-Teacher --num_envs 1024 --headless --run_name insertion_phase2_dmr --load_run 2025-05-10_02-43-06_insertion_phase1_raw80 --resume True --max_iterations 5000 

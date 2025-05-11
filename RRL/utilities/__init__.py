@@ -4,3 +4,4 @@ from .traj_generator import *
 from .state_hist_buffer import *
 from .pose_transformations import *
 from .running_mean_std import *
+from .ou_noise import OUNoise
