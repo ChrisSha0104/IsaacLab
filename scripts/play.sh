@@ -16,7 +16,7 @@
 
 ### INSERTION ###
 # teacher
-# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Insertion-Teacher --enable_cameras --num_envs 49 --load_run 2025-05-10_04-14-31_insertion_phase2_dmr
+./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Insertion-Teacher --enable_cameras --num_envs 1 --load_run 2025-05-10_04-14-31_insertion_phase2_dmr
 
 # student
-./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Insertion-Student --enable_cameras --num_envs 1 --load_run 2025-05-10_13-08-28_distillation_insertion_v0
+# ./isaaclab.sh -p source/standalone/workflows/rsl_rl/play_rp.py --task XArm-Residual-Insertion-Student --enable_cameras --num_envs 1 --load_run 2025-05-10_13-08-28_distillation_insertion_v0

@@ -30,7 +30,7 @@ class XArmResidualInsertionStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     empirical_normalization = False
     policy = RslRlResidualPpoActorCriticCfg(
         class_name="ResidualActorCritic",
-        init_logstd=-2.0, 
+        init_logstd=-1.5, 
         actor_hidden_size=256,
         actor_num_layers=2,
         actor_activation="ReLU",

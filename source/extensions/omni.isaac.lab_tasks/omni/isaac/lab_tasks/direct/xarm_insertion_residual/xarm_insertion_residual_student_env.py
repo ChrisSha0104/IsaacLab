@@ -880,8 +880,8 @@ class XArmInsertionResidualStudentEnv(DirectRLEnv):
         #     self.marker7.visualize(nut_root[:,:3] + self.scene.env_origins, nut_root[:,3:7]) # visualize nut pick up pose
 
         if apply_dmr:
-            nut_root[env_ids,0] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #x 
-            nut_root[env_ids,1] += sample_uniform(-0.01, 0.01, len(env_ids), self.device) #y
+            nut_root[env_ids,0] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #x 
+            nut_root[env_ids,1] += sample_uniform(-0.03, 0.03, len(env_ids), self.device) #y
 
         nut_root[env_ids,:3] = torch.clamp(nut_root[env_ids,:3], self.nut_low[env_ids,:3], self.nut_high[env_ids,:3])
         self._nut.write_root_state_to_sim(root_state=nut_root, env_ids=env_ids) #NOTE: no render on reset

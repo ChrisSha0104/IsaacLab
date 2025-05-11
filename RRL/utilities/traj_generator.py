@@ -707,6 +707,92 @@ def nlerp(a: torch.Tensor, b: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor
 
 #     return out
 
+def add_local_correlated_noise(
+    trajectories: torch.Tensor,         # (E, D, T, 10)
+    env_ids: torch.Tensor,              # (K,)
+    step_interval: int,
+    noise_level: float,
+    beta: float,
+    noise_start: int = 0,
+    noise_end: Optional[int] = None,
+) -> torch.Tensor:
+    E, D, T, C = trajectories.shape
+    assert C == 10, "expected last dim == 10"
+    if noise_end is None:
+        noise_end = T - 1
+
+    # clamp & validate
+    noise_start = max(0, noise_start)
+    noise_end   = min(T-1, noise_end)
+    if noise_start > noise_end:
+        raise ValueError(f"noise_start ({noise_start}) > noise_end ({noise_end})")
+
+    # 1) extract
+    sub  = trajectories[env_ids]       # (K,D,T,10)
+    pos  = sub[..., :3]                # (K,D,T,3)
+    ori6 = sub[..., 3:9]               # (K,D,T,6)
+
+    # 2) node indices
+    node_idxs = list(range(0, T, step_interval))
+    if node_idxs[-1] != T-1:
+        node_idxs.append(T-1)
+    nodes = torch.tensor(node_idxs, device=trajectories.device)  # (M,)
+
+    # 3) raw noise at nodes
+    K, M = sub.shape[0], len(nodes)
+    raw_noise = torch.randn(K, D, M, 9, device=sub.device) * noise_level
+    raw_noise[..., 0, :] = 0.0       # no noise at t=0
+    raw_noise[..., 2]    = 0.0       # zero z-axis
+
+    # 4) exponential smoothing
+    corr = torch.zeros_like(raw_noise)
+    corr[..., 0, :] = raw_noise[..., 0, :]
+    for i in range(1, M):
+        corr[..., i, :] = beta * corr[..., i-1, :] + (1 - beta) * raw_noise[..., i, :]
+
+    # 5) add noise at nodes
+    pos_nodes = pos[..., nodes, :] + corr[..., :, :3]   # (K,D,M,3)
+    ori_nodes = ori6[..., nodes, :] + corr[..., :, 3:]  # (K,D,M,6)
+
+    # 6) precompute interpolation
+    t        = torch.arange(T, device=sub.device)
+    seg      = torch.clamp(t // step_interval, max=M-2)
+    start_n  = nodes[seg]
+    end_n    = nodes[seg+1]
+    alpha    = (t - start_n).float() / (end_n - start_n).float()
+
+    KD       = K * D
+    pos_flat = pos_nodes.view(KD, M, 3)
+    ori_flat = ori_nodes.view(KD, M, 6)
+
+    seg_kd  = seg.unsqueeze(0).expand(KD, T)
+    seg_kd2 = (seg+1).unsqueeze(0).expand(KD, T)
+
+    p0 = pos_flat.gather(1, seg_kd.unsqueeze(-1).expand(-1, -1, 3))
+    p1 = pos_flat.gather(1, seg_kd2.unsqueeze(-1).expand(-1, -1, 3))
+    o0 = ori_flat.gather(1, seg_kd.unsqueeze(-1).expand(-1, -1, 6))
+    o1 = ori_flat.gather(1, seg_kd2.unsqueeze(-1).expand(-1, -1, 6))
+
+    alpha_kd    = alpha.unsqueeze(0).unsqueeze(-1)  # (1, T,1)
+    new_pos_flat = (1-alpha_kd)*p0 + alpha_kd*p1   # (KD,T,3)
+    new_ori_flat = nlerp(o0, o1, alpha_kd)         # (KD,T,6)
+
+    new_pos = new_pos_flat.view(K, D, T, 3)
+    new_ori = new_ori_flat.view(K, D, T, 6)
+
+    # 7) interval mask
+    interval_mask = ((t >= noise_start) & (t <= noise_end)).view(1,1,T,1)
+    orig_pos = sub[..., :3]
+    orig_ori = sub[..., 3:9]
+
+    pos_masked = torch.where(interval_mask, new_pos, orig_pos)
+    ori_masked = torch.where(interval_mask, new_ori, orig_ori)
+
+    # 8) stitch back
+    out = trajectories.clone()
+    out[env_ids, ..., :3]  = pos_masked
+    out[env_ids, ..., 3:9] = ori_masked
+    return out
 
 
 def add_correlated_noise_vectorized(
