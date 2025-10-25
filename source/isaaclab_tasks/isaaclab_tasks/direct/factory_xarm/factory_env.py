@@ -37,6 +37,8 @@ class FactoryEnv(DirectRLEnv):
         self._init_tensors()
         self._set_default_dynamics_parameters()
 
+        self.verbose = True
+
     def _set_default_dynamics_parameters(self):
         """Set parameters defining dynamic interactions."""
         self.default_gains = torch.tensor(self.cfg.ctrl.default_task_prop_gains, device=self.device).repeat(
@@ -67,10 +69,12 @@ class FactoryEnv(DirectRLEnv):
         self.init_fixed_pos_obs_noise = torch.zeros((self.num_envs, 3), device=self.device)
 
         # Computer body indices.
-        #TODO: update for xarm
-        self.left_finger_body_idx = self._robot.body_names.index("panda_leftfinger") 
-        self.right_finger_body_idx = self._robot.body_names.index("panda_rightfinger")
-        self.fingertip_body_idx = self._robot.body_names.index("panda_fingertip_centered")
+        self.left_finger_body_idx = self._robot.body_names.index("left_finger") 
+        self.right_finger_body_idx = self._robot.body_names.index("right_finger")
+        self.eef_body_idx = self._robot.body_names.index("link7") # TODO: change logic to fingertip == T(eef)
+        self.fingertip2eef_offset = torch.tensor([self.cfg.fingertip2eef_offset], device=self.device).repeat(self.num_envs, 1)
+        self.arm_dof_idx, _ = self._robot.find_joints("joint.*")
+        self.gripper_dof_idx, _ = self._robot.find_joints("gripper")
 
         # Tensors for finite-differencing.
         self.last_update_timestamp = 0.0  # Note: This is for finite differencing body velocities.
@@ -78,7 +82,7 @@ class FactoryEnv(DirectRLEnv):
         self.prev_fingertip_quat = (
             torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         )
-        self.prev_joint_pos = torch.zeros((self.num_envs, 6), device=self.device)
+        self.prev_joint_pos = torch.zeros((self.num_envs, 7), device=self.device)
 
         self.ep_succeeded = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
         self.ep_success_times = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
@@ -125,19 +129,25 @@ class FactoryEnv(DirectRLEnv):
         self.held_pos = self._held_asset.data.root_pos_w - self.scene.env_origins
         self.held_quat = self._held_asset.data.root_quat_w
 
-        self.fingertip_midpoint_pos = self._robot.data.body_pos_w[:, self.fingertip_body_idx] - self.scene.env_origins
-        self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.fingertip_body_idx]
-        self.fingertip_midpoint_linvel = self._robot.data.body_lin_vel_w[:, self.fingertip_body_idx]
-        self.fingertip_midpoint_angvel = self._robot.data.body_ang_vel_w[:, self.fingertip_body_idx]
+        self.eef_pos = self._robot.data.body_pos_w[:, self.eef_body_idx] - self.scene.env_origins
+        self.fingertip_midpoint_pos = torch_utils.tf_combine(
+            self._robot.data.body_quat_w[:, self.eef_body_idx],
+            self.eef_pos,
+            torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
+            self.fingertip2eef_offset,
+        )[1]
 
-        jacobians = self._robot.root_physx_view.get_jacobians()
+        self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.eef_body_idx]
+        self.fingertip_midpoint_linvel = self._robot.data.body_lin_vel_w[:, self.eef_body_idx] # NOTE: actually eef vels
+        self.fingertip_midpoint_angvel = self._robot.data.body_ang_vel_w[:, self.eef_body_idx]
 
-        self.left_finger_jacobian = jacobians[:, self.left_finger_body_idx - 1, 0:6, 0:6] # NOTE: changed to 6dof xarm
-        self.right_finger_jacobian = jacobians[:, self.right_finger_body_idx - 1, 0:6, 0:6]
+        jacobians = self._robot.root_physx_view.get_jacobians() # (num_envs, num_bodies, 6, num_dofs)
+
+        self.left_finger_jacobian = jacobians[:, self.left_finger_body_idx - 1, 0:6, 0:7] # (num_envs, 6, arm_idx), origin at body idx
+        self.right_finger_jacobian = jacobians[:, self.right_finger_body_idx - 1, 0:6, 0:7]
         self.fingertip_midpoint_jacobian = (self.left_finger_jacobian + self.right_finger_jacobian) * 0.5
-        self.arm_mass_matrix = self._robot.root_physx_view.get_generalized_mass_matrices()[:, 0:6, 0:6]
+        self.arm_mass_matrix = self._robot.root_physx_view.get_generalized_mass_matrices()[:, 0:7, 0:7]
 
-        import pdb; pdb.set_trace()
         self.joint_pos = self._robot.data.joint_pos.clone() # check shape
         self.joint_vel = self._robot.data.joint_vel.clone()
 
@@ -154,9 +164,9 @@ class FactoryEnv(DirectRLEnv):
         self.ee_angvel_fd = rot_diff_aa / dt
         self.prev_fingertip_quat = self.fingertip_midpoint_quat.clone()
 
-        joint_diff = self.joint_pos[:, 0:6] - self.prev_joint_pos
+        joint_diff = self.joint_pos[:, 0:7] - self.prev_joint_pos
         self.joint_vel_fd = joint_diff / dt
-        self.prev_joint_pos = self.joint_pos[:, 0:6].clone()
+        self.prev_joint_pos = self.joint_pos[:, 0:7].clone()
 
         self.last_update_timestamp = self._robot._data._sim_timestamp
 
@@ -181,7 +191,7 @@ class FactoryEnv(DirectRLEnv):
             "fingertip_quat": self.fingertip_midpoint_quat,
             "ee_linvel": self.fingertip_midpoint_linvel,
             "ee_angvel": self.fingertip_midpoint_angvel,
-            "joint_pos": self.joint_pos[:, 0:6],
+            "joint_pos": self.joint_pos[:, 0:7],
             "held_pos": self.held_pos,
             "held_pos_rel_fixed": self.held_pos - self.fixed_pos_obs_frame,
             "held_quat": self.held_quat,
@@ -215,12 +225,14 @@ class FactoryEnv(DirectRLEnv):
 
         self.actions = self.ema_factor * action.clone().to(self.device) + (1 - self.ema_factor) * self.actions
 
+        print("applied action: ", self.actions[0].cpu().numpy())
+
     def close_gripper_in_place(self):
         """Keep gripper in current position as gripper closes."""
         actions = torch.zeros((self.num_envs, 6), device=self.device)
 
         # Interpret actions as target pos displacements and set pos target
-        pos_actions = actions[:, 0:3] * self.pos_threshold
+        pos_actions = actions[:, 0:3] * self.pos_threshold # NOTE: output delta
         ctrl_target_fingertip_midpoint_pos = self.fingertip_midpoint_pos + pos_actions
 
         # Interpret actions as target rot (axis-angle) displacements
@@ -250,8 +262,14 @@ class FactoryEnv(DirectRLEnv):
         self.generate_ctrl_signals(
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-            ctrl_target_gripper_dof_pos=0.0,
+            ctrl_target_gripper_dof_pos=1.5,
         )
+
+        # self.generate_ctrl_signals(
+        #     ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
+        #     ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
+        #     ctrl_target_gripper_dof_pos=0.0,
+        # )
 
     def _apply_action(self):
         """Apply actions for policy as delta targets from current position."""
@@ -259,6 +277,9 @@ class FactoryEnv(DirectRLEnv):
         # Check if we need to re-compute velocities within the decimation loop.
         if self.last_update_timestamp < self._robot._data._sim_timestamp:
             self._compute_intermediate_values(dt=self.physics_dt)
+
+
+        # TODO: debug why gripper moving with zero action goal
 
         # Interpret actions as target pos displacements and set pos target
         pos_actions = self.actions[:, 0:3] * self.pos_threshold
@@ -297,20 +318,29 @@ class FactoryEnv(DirectRLEnv):
         ctrl_target_fingertip_midpoint_quat = torch_utils.quat_from_euler_xyz(
             roll=target_euler_xyz[:, 0], pitch=target_euler_xyz[:, 1], yaw=target_euler_xyz[:, 2]
         )
+        # print("target fingertip pos:", ctrl_target_fingertip_midpoint_pos[0])
+        # print("target fingertip quat:", ctrl_target_fingertip_midpoint_quat[0])
 
-        self.set_joint_position_target(
+        # print("current fingertip pos:", self.fingertip_midpoint_pos[0])
+        # print("current fingertip quat:", self.fingertip_midpoint_quat[0])
+
+        print("target fingertip midpoint pos:", ctrl_target_fingertip_midpoint_pos[0].cpu().numpy())
+        print("current fingertip midpoint pos:", self.fingertip_midpoint_pos[0].cpu().numpy())
+
+        self.generate_ctrl_signals(
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
+            ctrl_target_gripper_dof_pos=1.5,
         )
+        # import pdb; pdb.set_trace()
 
-        # self.generate_ctrl_signals(
-        #     ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
-        #     ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-        #     ctrl_target_gripper_dof_pos=0.0,
-        # )
-
-    def set_joint_position_target(self, ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat):
-        self.joint_pos_target, self.joint_vel_target, x_acc, _ = factory_control.compute_dof_state(
+    def generate_ctrl_signals(
+        self, 
+        ctrl_target_fingertip_midpoint_pos, 
+        ctrl_target_fingertip_midpoint_quat,
+        ctrl_target_gripper_dof_pos=0.0, # default open
+        ):
+        self.arm_joint_pose_target, self.joint_vel_target, x_acc, _ = factory_control.compute_dof_state(
             cfg=self.cfg,
             dof_pos=self.joint_pos,
             dof_vel=self.joint_vel,
@@ -330,37 +360,38 @@ class FactoryEnv(DirectRLEnv):
             dead_zone_thresholds=self.dead_zone_thresholds,
         )
 
-        self._robot.set_joint_position_target(self.joint_pos_target) # TODO: only for arm
-        self._robot.set_joint_velocity_target(self.joint_vel_target)
+        self._robot.set_joint_position_target(self.arm_joint_pose_target, joint_ids=self.arm_dof_idx)
+        self._robot.set_joint_position_target(torch.tensor([[ctrl_target_gripper_dof_pos]], device=self.device).repeat(self.num_envs,1), joint_ids=self.gripper_dof_idx)
+        # self._robot.set_joint_velocity_target(self.joint_vel_target)
 
-    def generate_ctrl_signals(
-        self, ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, ctrl_target_gripper_dof_pos
-    ):
-        """Get Jacobian. Set Franka DOF position targets (fingers) or DOF torques (arm)."""
-        self.joint_torque, self.applied_wrench = factory_control.compute_dof_torque(
-            cfg=self.cfg,
-            dof_pos=self.joint_pos,
-            dof_vel=self.joint_vel,
-            fingertip_midpoint_pos=self.fingertip_midpoint_pos,
-            fingertip_midpoint_quat=self.fingertip_midpoint_quat,
-            fingertip_midpoint_linvel=self.fingertip_midpoint_linvel,
-            fingertip_midpoint_angvel=self.fingertip_midpoint_angvel,
-            jacobian=self.fingertip_midpoint_jacobian,
-            arm_mass_matrix=self.arm_mass_matrix,
-            ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
-            ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-            task_prop_gains=self.task_prop_gains,
-            task_deriv_gains=self.task_deriv_gains,
-            device=self.device,
-            dead_zone_thresholds=self.dead_zone_thresholds,
-        )
+    # def generate_ctrl_signals(
+    #     self, ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, ctrl_target_gripper_dof_pos
+    # ):
+    #     """Get Jacobian. Set Franka DOF position targets (fingers) or DOF torques (arm)."""
+    #     self.joint_torque, self.applied_wrench = factory_control.compute_dof_torque(
+    #         cfg=self.cfg,
+    #         dof_pos=self.joint_pos,
+    #         dof_vel=self.joint_vel,
+    #         fingertip_midpoint_pos=self.fingertip_midpoint_pos,
+    #         fingertip_midpoint_quat=self.fingertip_midpoint_quat,
+    #         fingertip_midpoint_linvel=self.fingertip_midpoint_linvel,
+    #         fingertip_midpoint_angvel=self.fingertip_midpoint_angvel,
+    #         jacobian=self.fingertip_midpoint_jacobian,
+    #         arm_mass_matrix=self.arm_mass_matrix,
+    #         ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
+    #         ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
+    #         task_prop_gains=self.task_prop_gains,
+    #         task_deriv_gains=self.task_deriv_gains,
+    #         device=self.device,
+    #         dead_zone_thresholds=self.dead_zone_thresholds,
+    #     )
 
-        # set target for gripper joints to use physx's PD controller
-        self.ctrl_target_joint_pos[:, 7:9] = ctrl_target_gripper_dof_pos
-        self.joint_torque[:, 7:9] = 0.0
+    #     # set target for gripper joints to use physx's PD controller
+    #     self.ctrl_target_joint_pos[:, 7:9] = ctrl_target_gripper_dof_pos
+    #     self.joint_torque[:, 7:9] = 0.0
 
-        self._robot.set_joint_position_target(self.ctrl_target_joint_pos)
-        self._robot.set_joint_effort_target(self.joint_torque)
+    #     self._robot.set_joint_position_target(self.ctrl_target_joint_pos)
+    #     self._robot.set_joint_effort_target(self.joint_torque)
 
     def _get_dones(self):
         """Check which environments are terminated.
@@ -568,10 +599,10 @@ class FactoryEnv(DirectRLEnv):
                 jacobian=self.fingertip_midpoint_jacobian[env_ids],
                 device=self.device,
             )
-            self.joint_pos[env_ids, 0:6] += delta_dof_pos[:, 0:6]
+            self.joint_pos[env_ids, 0:7] += delta_dof_pos[:, 0:7]
             self.joint_vel[env_ids, :] = torch.zeros_like(self.joint_pos[env_ids,])
 
-            self.ctrl_target_joint_pos[env_ids, 0:6] = self.joint_pos[env_ids, 0:6]
+            self.ctrl_target_joint_pos[env_ids, 0:7] = self.joint_pos[env_ids, 0:7]
             # Update dof state.
             self._robot.write_joint_state_to_sim(self.joint_pos, self.joint_vel)
             self._robot.set_joint_position_target(self.ctrl_target_joint_pos)
@@ -618,9 +649,12 @@ class FactoryEnv(DirectRLEnv):
 
     def _set_franka_to_default_pose(self, joints, env_ids):
         """Return Franka to its default joint position."""
-        gripper_width = self.cfg_task.held_asset_cfg.diameter / 2 * 1.25
+        gripper_width = self.cfg_task.held_asset_cfg.diameter / 2 * 1.25 # 0.005 m
         joint_pos = self._robot.data.default_joint_pos[env_ids]
-        joint_pos[:, 7:] = gripper_width  # MIMIC
+        gripper_pos = 1.2
+        # NOTE: has to set finger pos = 0.5 gripper pos by design of urdf
+        joint_pos[:, 8:] = gripper_pos / 2.0 
+        joint_pos[:, 7] = gripper_pos
         joint_pos[:, :7] = torch.tensor(joints, device=self.device)[None, :]
         joint_vel = torch.zeros_like(joint_pos)
         joint_effort = torch.zeros_like(joint_pos)
@@ -631,6 +665,11 @@ class FactoryEnv(DirectRLEnv):
         self._robot.set_joint_effort_target(joint_effort, env_ids=env_ids)
 
         self.step_sim_no_action()
+
+        # print("curr pos", self._robot.data.joint_pos)
+        # print("target pos", self.ctrl_target_joint_pos)
+        # import pdb; pdb.set_trace()
+
 
     def step_sim_no_action(self):
         """Step the simulation without an action. Used for resets only.
@@ -643,11 +682,18 @@ class FactoryEnv(DirectRLEnv):
         self.scene.update(dt=self.physics_dt)
         self._compute_intermediate_values(dt=self.physics_dt)
 
+    def log(self, string):
+        if self.verbose:
+            print(f"== {string} ==")
+
+
     def randomize_initial_state(self, env_ids):
         """Randomize initial state and perform any episode-level randomization."""
         # Disable gravity.
         physics_sim_view = sim_utils.SimulationContext.instance().physics_sim_view
         physics_sim_view.set_gravity(carb.Float3(0.0, 0.0, 0.0))
+
+        self.log("Randomizing initial state...")
 
         # (1.) Randomize fixed asset pose.
         fixed_state = self._fixed_asset.data.default_root_state.clone()[env_ids]
@@ -671,6 +717,7 @@ class FactoryEnv(DirectRLEnv):
         fixed_state[:, 3:7] = fixed_orn_quat
         # (1.c.) Velocity
         fixed_state[:, 7:] = 0.0  # vel
+        self.log(f"Fixed asset state: {fixed_state}")
         # (1.d.) Update values.
         self._fixed_asset.write_root_pose_to_sim(fixed_state[:, 0:7], env_ids=env_ids)
         self._fixed_asset.write_root_velocity_to_sim(fixed_state[:, 7:], env_ids=env_ids)
@@ -700,6 +747,8 @@ class FactoryEnv(DirectRLEnv):
         )
         self.fixed_pos_obs_frame[:] = fixed_tip_pos
 
+        self.log(f"Fixed tip pos: {fixed_tip_pos}")
+
         # (2) Move gripper to randomizes location above fixed asset. Keep trying until IK succeeds.
         # (a) get position vector to target
         bad_envs = env_ids.clone()
@@ -717,6 +766,9 @@ class FactoryEnv(DirectRLEnv):
             hand_init_pos_rand = torch.tensor(self.cfg_task.hand_init_pos_noise, device=self.device)
             above_fixed_pos_rand = above_fixed_pos_rand @ torch.diag(hand_init_pos_rand)
             above_fixed_pos[bad_envs] += above_fixed_pos_rand
+
+            self.log(f"Above fixed pos: {above_fixed_pos[bad_envs]}")
+            self.log(f"Robot current fingertip pos: {self.fingertip_midpoint_pos[bad_envs]}")
 
             # (b) get random orientation facing down
             hand_down_euler = (
@@ -738,6 +790,8 @@ class FactoryEnv(DirectRLEnv):
                 ctrl_target_fingertip_midpoint_quat=hand_down_quat,
                 env_ids=bad_envs,
             )
+            # print("pos_error:", torch.linalg.norm(pos_error, dim=1), "aa_error:", torch.linalg.norm(aa_error, dim=1))
+            self.log(f"IK pos error: {torch.linalg.norm(pos_error, dim=1)}, angle error: {torch.linalg.norm(aa_error, dim=1)}")
             pos_error = torch.linalg.norm(pos_error, dim=1) > 1e-3
             angle_error = torch.norm(aa_error, dim=1) > 1e-3
             any_error = torch.logical_or(pos_error, angle_error)
@@ -747,9 +801,10 @@ class FactoryEnv(DirectRLEnv):
             if bad_envs.shape[0] == 0:
                 break
 
-            self._set_franka_to_default_pose( # TODO: change default pose to xarm6
-                joints=[0.00871, -0.10368, -0.00794, -1.49139, -0.00083, 1.38774, 0.0], env_ids=bad_envs
-            )
+            self._set_franka_to_default_pose(
+                joints=[0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0], env_ids=bad_envs
+            ) # TODO: tune this
+            # use same initial eef pose as franka
 
             ik_attempt += 1
 
@@ -783,7 +838,7 @@ class FactoryEnv(DirectRLEnv):
             t2=torch.zeros((self.num_envs, 3), device=self.device),
         )
 
-        # get default gripper in asset transform
+        # get default gripper in asset transform # TODO: might need cha ge
         held_asset_relative_pos, held_asset_relative_quat = self.get_handheld_asset_relative_pose()
         asset_in_hand_quat, asset_in_hand_pos = torch_utils.tf_inverse(
             held_asset_relative_quat, held_asset_relative_pos
@@ -816,6 +871,9 @@ class FactoryEnv(DirectRLEnv):
         self._held_asset.write_root_velocity_to_sim(held_state[:, 7:])
         self._held_asset.reset()
 
+        self.log(f"held asset state: {held_state}")
+        self.log("Closing gripper to hold asset...")
+
         #  Close hand
         # Set gains to use for quick resets.
         reset_task_prop_gains = torch.tensor(self.cfg.ctrl.reset_task_prop_gains, device=self.device).repeat(
@@ -830,12 +888,18 @@ class FactoryEnv(DirectRLEnv):
 
         grasp_time = 0.0
         while grasp_time < 0.25:
-            self.ctrl_target_joint_pos[env_ids, 6:] = 0.0  # Close gripper. #TODO: change
+            # self.ctrl_target_joint_pos[env_ids, 7] = 1.7 # Close gripper.
+            self.log("Closing gripper...")
             self.close_gripper_in_place()
+            # self._robot.set_joint_position_target(torch.tensor([[1.7]], device=self.device).repeat(self.num_envs,1), joint_ids=self.gripper_dof_idx)
+            print("goal qpos", self._robot.data.joint_pos_target)
+            print("curr qpos", self._robot.data.joint_pos)
             self.step_sim_no_action()
             grasp_time += self.sim.get_physics_dt()
 
-        self.prev_joint_pos = self.joint_pos[:, 0:6].clone()
+        self.log("Gripper closed. Resetting simulator states...")
+
+        self.prev_joint_pos = self.joint_pos[:, 0:7].clone()
         self.prev_fingertip_pos = self.fingertip_midpoint_pos.clone()
         self.prev_fingertip_quat = self.fingertip_midpoint_quat.clone()
 

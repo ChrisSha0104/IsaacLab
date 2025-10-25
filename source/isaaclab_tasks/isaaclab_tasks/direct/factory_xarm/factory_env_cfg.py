@@ -11,6 +11,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
 from isaaclab.utils import configclass
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
 from .factory_tasks_cfg import ASSET_DIR, FactoryTask, GearMesh, NutThread, PegInsert
 
@@ -56,7 +57,7 @@ class CtrlCfg:
     pos_action_threshold = [0.02, 0.02, 0.02]
     rot_action_threshold = [0.097, 0.097, 0.097]
 
-    reset_joints = [1.5178e-03, -1.9651e-01, -1.4364e-03, -1.9761, -2.7717e-04, 1.7796, 7.8556e-01]
+    reset_joints = [0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0]
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
     reset_rot_deriv_scale = 10.0
     default_task_prop_gains = [100, 100, 100, 30, 30, 30]
@@ -186,11 +187,12 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     #         ),
     #     },
     # )
-    robot = ArticulationCfg(
-        prim_path="/World/envs/env_.*/Robot",
+    XARM_USD_PATH = "source/isaaclab_tasks/isaaclab_tasks/direct/factory_xarm/assets/xarm7_gripper.usd"
+    robot: ArticulationCfg = ArticulationCfg(
+        prim_path="/World/envs/env_.*/robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ASSET_DIR}/franka_mimic.usd",
-            activate_contact_sensors=True,
+            usd_path=XARM_USD_PATH,
+            activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=True,
                 max_depenetration_velocity=5.0,
@@ -204,57 +206,52 @@ class FactoryEnvCfg(DirectRLEnvCfg):
                 max_contact_impulse=1e32,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=False,
-                solver_position_iteration_count=192,
-                solver_velocity_iteration_count=1,
+                enabled_self_collisions=False,      
+                solver_position_iteration_count=192, 
+                solver_velocity_iteration_count=1
             ),
-            collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
-        ),
+            joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="force"),    
+            # collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+        ), 
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
-                "panda_joint1": 0.00871,
-                "panda_joint2": -0.10368,
-                "panda_joint3": -0.00794,
-                "panda_joint4": -1.49139,
-                "panda_joint5": -0.00083,
-                "panda_joint6": 1.38774,
-                "panda_joint7": 0.0,
-                "panda_finger_joint2": 0.04,
+                "joint1": 0.035,
+                "joint2": -0.785, #-45
+                "joint3": 0.0,
+                "joint4": 0.523, # 30
+                "joint5": 0.0,
+                "joint6": 1.31, # 75
+                "joint7": 0.0,
+                "gripper": 0.0, # 0.0 to 1.7
+                "left_driver_joint": 0.0,
+                "left_inner_knuckle_joint": 0.0,
+                "left_finger_joint": 0.0,
+                "right_driver_joint": 0.0,
+                "right_inner_knuckle_joint": 0.0,
+                "right_finger_joint": 0.0,
             },
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         actuators={
-            "panda_arm1": ImplicitActuatorCfg(
-                joint_names_expr=["panda_joint[1-4]"],
-                stiffness=0.0,
-                damping=0.0,
-                friction=0.0,
-                armature=0.0,
-                effort_limit_sim=87,
-                velocity_limit_sim=124.6,
+            "arm": ImplicitActuatorCfg(
+                joint_names_expr=["joint[1-7]"],
+                # effort_limit=50.0,
+                # velocity_limit=3.14,
+                stiffness=200,#80.0, 
+                damping=20,#10.0,
             ),
-            "panda_arm2": ImplicitActuatorCfg(
-                joint_names_expr=["panda_joint[5-7]"],
-                stiffness=0.0,
-                damping=0.0,
-                friction=0.0,
-                armature=0.0,
-                effort_limit_sim=12,
-                velocity_limit_sim=149.5,
-            ),
-            "panda_hand": ImplicitActuatorCfg(
-                joint_names_expr=["panda_finger_joint[1-2]"],
-                effort_limit_sim=40.0,
-                velocity_limit_sim=0.04,
-                stiffness=7500.0,
-                damping=173.0,
-                friction=0.1,
-                armature=0.0,
+            "xarm_hand": ImplicitActuatorCfg(
+                joint_names_expr=["gripper"], 
+                # effort_limit=5.0,
+                # velocity_limit=0.04,
+                stiffness=20.0, # 200
+                damping=0.0, # 20
             ),
         },
     )
-
+    
+    fingertip2eef_offset = [0.0, 0.0, 0.17]
 
 @configclass
 class FactoryTaskPegInsertCfg(FactoryEnvCfg):

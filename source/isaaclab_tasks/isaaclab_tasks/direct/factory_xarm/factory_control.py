@@ -210,7 +210,7 @@ def compute_dof_state(
     dof_pos, dof_vel,
     fingertip_midpoint_pos, fingertip_midpoint_quat,
     fingertip_midpoint_linvel, fingertip_midpoint_angvel,
-    jacobian, arm_mass_matrix,
+    jacobian, arm_mass_matrix, # jacobian at fingertip
     ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat,
     task_prop_gains, task_deriv_gains,
     dt, F_ext, device,
@@ -234,9 +234,9 @@ def compute_dof_state(
     xdot_now = torch.cat((fingertip_midpoint_linvel, fingertip_midpoint_angvel), dim=1)  # (B,6)
 
     # 2) Task-space inertia (Mx)
-    Mq_inv = torch.inverse(arm_mass_matrix)  # (B,n,n)
+    Mq_inv = torch.inverse(arm_mass_matrix)  # (B,n,n) - M_inv in joint space
     JT = jacobian.transpose(1, 2)            # (B,n,6)
-    Mx = torch.inverse(torch.bmm(jacobian, torch.bmm(Mq_inv, JT)))  # (B,6,6)
+    Mx = torch.inverse(torch.bmm(jacobian, torch.bmm(Mq_inv, JT)))  # (B,6,6) - M in task space
 
     # 3) Spring-damper (admittance) term — separate linear/rotational parts
     spring_damper = torch.zeros_like(e_task)
@@ -260,7 +260,7 @@ def compute_dof_state(
             (F_ext - spring_damper).sign() * ((F_ext - spring_damper).abs() - th),
         )
     else:
-        F_net = F_ext - spring_damper
+        F_net = F_ext - spring_damper # NOTE: F at eef, spring_damper at fingertip
 
     xddot = torch.bmm(torch.inverse(Mx), F_net.unsqueeze(-1)).squeeze(-1)  # (B,6)
 
@@ -273,6 +273,6 @@ def compute_dof_state(
     qd_next = torch.bmm(J_pinv, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
 
     # 7) Integrate joint positions
-    q_next = dof_pos + dt * qd_next
+    q_next = dof_pos[:, 0:7] + dt * qd_next
 
     return q_next, qd_next, xddot, e_task
