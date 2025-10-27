@@ -60,7 +60,7 @@ class CtrlCfg:
     reset_joints = [0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0]
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
     reset_rot_deriv_scale = 10.0
-    default_task_prop_gains = [500, 500, 500, 10, 10, 10]
+    default_task_prop_gains = [3000, 3000, 3000, 0, 0, 0]
 
     # Null space parameters.
     default_dof_pos_tensor = [0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0]
@@ -88,6 +88,8 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         "fixed_pos",
         "fixed_quat",
     ]
+
+    obs_order_no_task: list = ["fingertip_pos", "fingertip_quat"]
 
     task_name: str = "peg_insert"  # peg_insert, gear_mesh, nut_thread
     task: FactoryTask = FactoryTask()

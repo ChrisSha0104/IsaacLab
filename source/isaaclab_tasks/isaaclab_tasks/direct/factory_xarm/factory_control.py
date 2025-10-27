@@ -253,15 +253,15 @@ def compute_dof_state(
     )
 
     # 4) Admittance control law: xddot = Mx^{-1} (F_ext - (K e + D xdot))
-    if dead_zone_thresholds is not None:
-        th = dead_zone_thresholds
-        F_net = torch.where(
-            (F_ext - spring_damper).abs() < th,
-            torch.zeros_like(F_ext),
-            (F_ext - spring_damper).sign() * ((F_ext - spring_damper).abs() - th),
-        )
-    else:
-        F_net = F_ext - spring_damper # NOTE: F at eef, spring_damper at fingertip
+    # if dead_zone_thresholds is not None:
+    #     th = dead_zone_thresholds
+    #     F_net = torch.where(
+    #         (F_ext - spring_damper).abs() < th,
+    #         torch.zeros_like(F_ext),
+    #         (F_ext - spring_damper).sign() * ((F_ext - spring_damper).abs() - th),
+    #     )
+    # else:
+    F_net = F_ext - spring_damper # NOTE: F at eef, spring_damper at fingertip
 
     xddot = torch.bmm(torch.inverse(Mx), F_net.unsqueeze(-1)).squeeze(-1)  # (B,6)
 
@@ -281,22 +281,87 @@ def compute_dof_state(
     # Primary task joint velocity
     qd_task = torch.bmm(J_hash, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
 
-    # Nullspace projector N = I - J_hash * J
-    I = torch.eye(n, device=device).unsqueeze(0).expand(B, -1, -1)   # (B,n,n)
-    N = I - torch.bmm(J_hash, jacobian)                               # (B,n,n)
+    # # Nullspace projector N = I - J_hash * J
+    # I = torch.eye(n, device=device).unsqueeze(0).expand(B, -1, -1)   # (B,n,n)
+    # N = I - torch.bmm(J_hash, jacobian)                               # (B,n,n)
 
-    # Secondary (null) objective: PD toward default posture with damping
-    q_ref = torch.tensor(cfg.ctrl.default_dof_pos_tensor, device=device).unsqueeze(0).expand(B, -1)
-    Kp_null = cfg.ctrl.kp_null
-    Kd_null = cfg.ctrl.kd_null
+    # # Secondary (null) objective: PD toward default posture with damping
+    # q_ref = torch.tensor(cfg.ctrl.default_dof_pos_tensor, device=device).unsqueeze(0).expand(B, -1)
+    # Kp_null = cfg.ctrl.kp_null
+    # Kd_null = cfg.ctrl.kd_null
 
-    qd_null_des = Kp_null * (q_ref[:, :n] - dof_pos[:, :n]) - Kd_null * dof_vel[:, :n]   # (B,n)
+    # qd_null_des = Kp_null * (q_ref[:, :n] - dof_pos[:, :n]) - Kd_null * dof_vel[:, :n]   # (B,n)
 
-    # Project null motion so it doesn't affect the task: J (N qd_null_des) ≈ 0
-    qd_null = torch.bmm(N, qd_null_des.unsqueeze(-1)).squeeze(-1)     # (B,n)
+    # # Project null motion so it doesn't affect the task: J (N qd_null_des) ≈ 0
+    # qd_null = torch.bmm(N, qd_null_des.unsqueeze(-1)).squeeze(-1)     # (B,n)
 
     # Combine
-    qd_next = qd_task + qd_null
+    qd_next = qd_task #+ qd_null
+
+    # 7) Integrate joint positions
+    q_next = dof_pos[:, 0:7] + dt * qd_next
+
+    return q_next, qd_next, xddot, e_task
+
+def compute_dof_state_naive(
+    cfg,
+    dof_pos, dof_vel,
+    eef_pos, eef_quat,
+    eef_linvel, eef_angvel,
+    jacobian, arm_mass_matrix, # jacobian at eef
+    ctrl_target_eef_pos, ctrl_target_eef_quat,
+    task_prop_gains, task_deriv_gains,
+    dt, F_ext, device,
+    dead_zone_thresholds=None,
+):
+    """
+    Compute Xarm DOF state using task-space admittance control.
+    """
+    B, _ = dof_pos.shape
+    n = 7
+
+    # 1) Pose error (pos + axis-angle)
+    pos_err, aa_err = get_pose_error(
+        eef_pos,
+        eef_quat,
+        ctrl_target_eef_pos,
+        ctrl_target_eef_quat,
+        jacobian_type="geometric",
+        rot_error_type="axis_angle",
+    )
+    e_task = torch.cat((pos_err, aa_err), dim=1)  # (B,6)
+    xdot_now = torch.cat((eef_linvel, eef_angvel), dim=1)  # (B,6)
+
+    # 2) Task-space inertia (Mx)
+    Mq_inv = torch.inverse(arm_mass_matrix)  # (B,n,n) - M_inv in joint space
+    J_T = jacobian.transpose(1, 2)            # (B,n,6)
+    Mx = torch.inverse(torch.bmm(jacobian, torch.bmm(Mq_inv, JT)))  # (B,6,6) - M in task space
+
+    # 3) Spring-damper (admittance) term — separate linear/rotational parts
+    spring_damper = torch.zeros_like(e_task)
+    # linear components
+    spring_damper[:, 0:3] = (
+        task_prop_gains[:, 0:3] * e_task[:, 0:3]
+        + task_deriv_gains[:, 0:3] * eef_linvel
+    )
+    # rotational components
+    spring_damper[:, 3:6] = (
+        task_prop_gains[:, 3:6] * e_task[:, 3:6]
+        + task_deriv_gains[:, 3:6] * eef_angvel
+    )
+
+    # 4) Admittance control law: xddot = Mx^{-1} (F_ext - (K e + D xdot))
+    F_net = F_ext - spring_damper # NOTE: F at eef, spring_damper at fingertip
+
+    xddot = torch.bmm(torch.inverse(Mx), F_net.unsqueeze(-1)).squeeze(-1)  # (B,6)
+
+    # 5) Integrate in task-space (semi-implicit)
+    xdot_des = xdot_now + dt * xddot  # (B,6)
+
+    # 6) Map to joint velocities using Jacobian pseudoinverse
+    JJt_inv = torch.inverse(torch.bmm(jacobian, JT))  # (B,6,6)
+    J_pinv = torch.bmm(JT, JJt_inv)                   # (B,n,6)
+    qd_next = torch.bmm(J_pinv, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
 
     # 7) Integrate joint positions
     q_next = dof_pos[:, 0:7] + dt * qd_next

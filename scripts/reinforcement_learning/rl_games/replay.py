@@ -60,6 +60,7 @@ import os
 import random
 import time
 import torch
+import numpy as np
 
 from rl_games.common import env_configurations, vecenv
 from rl_games.common.player import BasePlayer
@@ -77,12 +78,19 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
+import isaacsim.core.utils.torch as torch_utils
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 # PLACEHOLDER: Extension template (do not remove this comment)
+def load_npz_dict(path):
+    data = np.load(path, allow_pickle=True)
+    return (
+        data["data"].item() if "data" in data.files
+        else {k: data[k].item() for k in data.files}
+    )
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -186,10 +194,22 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
+    # load trajectorys
+    data_path: str = "logs/data/xarm_adm_ctrl_test/robot_trajectories.npz"
+    eps_idx_key = "episode_0000"
+    data = np.load(data_path, allow_pickle=True)
+
+    pos = torch.from_numpy(data[f"{eps_idx_key}/obs.eef_pos"]).to(env.device)
+    quat = torch.from_numpy(data[f"{eps_idx_key}/obs.eef_quat"]).to(env.device)
+    qpos = data[f"{eps_idx_key}/obs.qpos"]
     # reset environment
     obs = env.reset()
-    if isinstance(obs, dict):
-        obs = obs["obs"]
+
+    # set to initial pose
+    env.unwrapped._set_franka_to_default_pose([qpos[0].tolist()], env_ids=torch.tensor([0], device=env.device))
+    obs = env.unwrapped._get_observations()
+    obs = obs["policy"]
+
     timestep = 0
     # required: enables the flag for batched observations
     _ = agent.get_batch_size(obs, 1)
@@ -205,11 +225,25 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # run everything in inference mode
         with torch.inference_mode():
             # convert obs to agent format
-            obs = agent.obs_to_torch(obs)
-            # agent stepping
-            actions = agent.get_action(obs, is_deterministic=agent.is_deterministic)
+            eef_pos = pos[timestep].unsqueeze(0)
+            eef_quat = quat[timestep].unsqueeze(0)
+            # fingertip_pos = torch_utils.tf_combine(
+            #     eef_quat,
+            #     eef_pos,
+            #     torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device),
+            #     torch.tensor([[0.0, 0.0, 0.17]], device=env.device),
+            # )[1]
+            actions = torch.cat([eef_pos, eef_quat], dim=-1)
+            print("------------ Step Info -----------")
+            print("Currently at timestep:", timestep)
+            print("Obs:", obs.cpu().numpy())
+            print("Actions:", actions.cpu().numpy())
+            print("---------------------------------")
+
             # env stepping
             obs, _, dones, _ = env.step(actions)
+            obs = obs["obs"]
+            timestep += 1
 
             # perform operations for terminated episodes
             if len(dones) > 0:
@@ -218,7 +252,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     for s in agent.states:
                         s[:, dones, :] = 0.0
         if args_cli.video:
-            timestep += 1
             # exit the play loop after recording one video
             if timestep == args_cli.video_length:
                 break
