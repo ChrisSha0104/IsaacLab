@@ -60,10 +60,10 @@ class CtrlCfg:
     reset_joints = [0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0]
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
     reset_rot_deriv_scale = 10.0
-    default_task_prop_gains = [100, 100, 100, 30, 30, 30]
+    default_task_prop_gains = [500, 500, 500, 10, 10, 10]
 
     # Null space parameters.
-    default_dof_pos_tensor = [-1.3003, -0.4015, 1.1791, -2.1493, 0.4001, 1.9425, 0.4754]
+    default_dof_pos_tensor = [0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0]
     kp_null = 10.0
     kd_null = 6.3246
 

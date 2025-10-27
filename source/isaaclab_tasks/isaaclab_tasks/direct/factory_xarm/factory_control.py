@@ -32,7 +32,7 @@ def compute_dof_torque(
     task_deriv_gains,
     device,
     dead_zone_thresholds=None,
-):
+    ):
     """Compute Franka DOF torque to move fingertips towards target pose."""
     # References:
     # 1) https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
@@ -108,7 +108,7 @@ def get_pose_error(
     ctrl_target_fingertip_midpoint_quat,
     jacobian_type,
     rot_error_type,
-):
+    ):
     """Compute task-space error between target Franka fingertip pose and current pose."""
     # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
 
@@ -187,7 +187,7 @@ def get_delta_dof_pos(delta_pose, ik_method, jacobian, device):
 
 def _apply_task_space_gains(
     delta_fingertip_pose, fingertip_midpoint_linvel, fingertip_midpoint_angvel, task_prop_gains, task_deriv_gains
-):
+    ):
     """Interpret PD gains as task-space gains. Apply to task-space error."""
 
     task_wrench = torch.zeros_like(delta_fingertip_pose)
@@ -219,7 +219,8 @@ def compute_dof_state(
     """
     Compute Xarm DOF state using task-space admittance control.
     """
-    B, n = dof_pos.shape
+    B, _ = dof_pos.shape
+    n = 7
 
     # 1) Pose error (pos + axis-angle)
     pos_err, aa_err = get_pose_error(
@@ -267,10 +268,35 @@ def compute_dof_state(
     # 5) Integrate in task-space (semi-implicit)
     xdot_des = xdot_now + dt * xddot  # (B,6)
 
-    # 6) Map to joint velocities using Jacobian pseudoinverse
-    JJt_inv = torch.inverse(torch.bmm(jacobian, JT))  # (B,6,6)
-    J_pinv = torch.bmm(JT, JJt_inv)                   # (B,n,6)
-    qd_next = torch.bmm(J_pinv, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
+    # # 6) Map to joint velocities using Jacobian pseudoinverse
+    # JJt_inv = torch.inverse(torch.bmm(jacobian, JT))  # (B,6,6)
+    # J_pinv = torch.bmm(JT, JJt_inv)                   # (B,n,6)
+    # qd_next = torch.bmm(J_pinv, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
+
+    # --- 6) Map to joint velocities with dynamic-consistent nullspace control ---
+
+    # J_hash = M⁻¹ Jᵀ Mx
+    J_hash = torch.bmm(Mq_inv, torch.bmm(JT, Mx))  # (B, n, 6)
+
+    # Primary task joint velocity
+    qd_task = torch.bmm(J_hash, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
+
+    # Nullspace projector N = I - J_hash * J
+    I = torch.eye(n, device=device).unsqueeze(0).expand(B, -1, -1)   # (B,n,n)
+    N = I - torch.bmm(J_hash, jacobian)                               # (B,n,n)
+
+    # Secondary (null) objective: PD toward default posture with damping
+    q_ref = torch.tensor(cfg.ctrl.default_dof_pos_tensor, device=device).unsqueeze(0).expand(B, -1)
+    Kp_null = cfg.ctrl.kp_null
+    Kd_null = cfg.ctrl.kd_null
+
+    qd_null_des = Kp_null * (q_ref[:, :n] - dof_pos[:, :n]) - Kd_null * dof_vel[:, :n]   # (B,n)
+
+    # Project null motion so it doesn't affect the task: J (N qd_null_des) ≈ 0
+    qd_null = torch.bmm(N, qd_null_des.unsqueeze(-1)).squeeze(-1)     # (B,n)
+
+    # Combine
+    qd_next = qd_task + qd_null
 
     # 7) Integrate joint positions
     q_next = dof_pos[:, 0:7] + dt * qd_next
