@@ -111,8 +111,8 @@ def get_pose_error(
     """Compute task-space error between target Franka fingertip pose and current pose."""
     # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
 
-    # Compute pos error NOTE: factory will no longer work - changed for adm control
-    pos_error = fingertip_midpoint_pos - ctrl_target_fingertip_midpoint_pos
+    # Compute pos error 
+    pos_error = ctrl_target_fingertip_midpoint_pos - fingertip_midpoint_pos 
 
     # Compute rot error
     if jacobian_type == "geometric":  # See example 2.9.8; note use of J_g and transformation between rotation vectors
@@ -136,7 +136,7 @@ def get_pose_error(
         quat_error = torch_utils.quat_mul(ctrl_target_fingertip_midpoint_quat, fingertip_midpoint_quat_inv)
 
         # Convert to axis-angle error
-        axis_angle_error = -axis_angle_from_quat(quat_error)
+        axis_angle_error = axis_angle_from_quat(quat_error)
 
     if rot_error_type == "quat":
         return pos_error, quat_error

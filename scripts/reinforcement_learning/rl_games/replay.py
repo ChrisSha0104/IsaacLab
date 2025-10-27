@@ -212,9 +212,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     obs = env.unwrapped._get_observations()
     obs = obs["policy"]
 
-    out_eef_pos = []
-    out_eef_quat = []
-    out_qpos = []
+    obs_eef_pos = []
+    obs_eef_quat = []
+    obs_qpos = []
+
+    act_eef_pos = []
+    act_eef_quat = []
 
     timestep = 0
     # required: enables the flag for batched observations
@@ -241,9 +244,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # )[1]
             actions = torch.cat([eef_pos, eef_quat], dim=-1)
 
-            out_eef_pos.append(obs[0,:3].cpu().numpy())
-            out_eef_quat.append(obs[0,3:7].cpu().numpy())
-            out_qpos.append(obs[0,7:].cpu().numpy())
+            obs_eef_pos.append(obs[0,:3].cpu().numpy())
+            obs_eef_quat.append(obs[0,3:7].cpu().numpy())
+            obs_qpos.append(obs[0,7:].cpu().numpy())
+
+            act_eef_pos.append(actions[0,:3].cpu().numpy())
+            act_eef_quat.append(actions[0,3:7].cpu().numpy())
 
             print("------------ Step Info -----------")
             print("Currently at timestep:", timestep, "/", T)
@@ -279,12 +285,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env.close()
 
     out_data = {
-        f"{eps_idx_key}/obs.eef_pos": np.array(out_eef_pos),
-        f"{eps_idx_key}/obs.eef_quat": np.array(out_eef_quat),
-        f"{eps_idx_key}/obs.qpos": np.array(out_qpos),
+        f"{eps_idx_key}/obs.eef_pos": np.array(obs_eef_pos),
+        f"{eps_idx_key}/obs.eef_quat": np.array(obs_eef_quat),
+        f"{eps_idx_key}/obs.qpos": np.array(obs_qpos),
+        f"{eps_idx_key}/action.eef_pos": np.array(act_eef_pos),
+        f"{eps_idx_key}/action.eef_quat": np.array(act_eef_quat),
     }
-
-    import pdb; pdb.set_trace()
 
     out_path = "logs/data/sim_trajs.npz"
     np.savez_compressed(out_path, **out_data)
