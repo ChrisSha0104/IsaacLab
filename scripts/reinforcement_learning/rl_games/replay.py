@@ -195,13 +195,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dt = env.unwrapped.step_dt
 
     # load trajectorys
-    data_path: str = "logs/data/xarm_adm_ctrl_test/robot_trajectories.npz"
+    data_path: str = "logs/data/robot_trajectories.npz"
     eps_idx_key = "episode_0000"
     data = np.load(data_path, allow_pickle=True)
 
     pos = torch.from_numpy(data[f"{eps_idx_key}/obs.eef_pos"]).to(env.device)
     quat = torch.from_numpy(data[f"{eps_idx_key}/obs.eef_quat"]).to(env.device)
     qpos = data[f"{eps_idx_key}/obs.qpos"]
+
+    T = pos.shape[0]
     # reset environment
     obs = env.reset()
 
@@ -209,6 +211,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env.unwrapped._set_franka_to_default_pose([qpos[0].tolist()], env_ids=torch.tensor([0], device=env.device))
     obs = env.unwrapped._get_observations()
     obs = obs["policy"]
+
+    out_eef_pos = []
+    out_eef_quat = []
+    out_qpos = []
 
     timestep = 0
     # required: enables the flag for batched observations
@@ -234,16 +240,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             #     torch.tensor([[0.0, 0.0, 0.17]], device=env.device),
             # )[1]
             actions = torch.cat([eef_pos, eef_quat], dim=-1)
+
+            out_eef_pos.append(obs[0,:3].cpu().numpy())
+            out_eef_quat.append(obs[0,3:7].cpu().numpy())
+            out_qpos.append(obs[0,7:].cpu().numpy())
+
             print("------------ Step Info -----------")
-            print("Currently at timestep:", timestep)
-            print("Obs:", obs.cpu().numpy())
-            print("Actions:", actions.cpu().numpy())
+            print("Currently at timestep:", timestep, "/", T)
+            print("curr task space pose:", obs[:,:7].cpu().numpy())
+            print("goal task space pose:", actions.cpu().numpy())
             print("---------------------------------")
 
             # env stepping
             obs, _, dones, _ = env.step(actions)
             obs = obs["obs"]
             timestep += 1
+
+            if timestep >= T:
+                break
 
             # perform operations for terminated episodes
             if len(dones) > 0:
@@ -263,6 +277,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # close the simulator
     env.close()
+
+    out_data = {
+        f"{eps_idx_key}/obs.eef_pos": np.array(out_eef_pos),
+        f"{eps_idx_key}/obs.eef_quat": np.array(out_eef_quat),
+        f"{eps_idx_key}/obs.qpos": np.array(out_qpos),
+    }
+
+    import pdb; pdb.set_trace()
+
+    out_path = "logs/data/sim_trajs.npz"
+    np.savez_compressed(out_path, **out_data)
+    print(f"[INFO] Saved simulated trajectories to: {out_path}")
 
 
 if __name__ == "__main__":

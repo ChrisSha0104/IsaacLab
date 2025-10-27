@@ -101,49 +101,48 @@ def compute_dof_torque(
     return dof_torque, task_wrench
 
 
-def get_pose_error(
-    fingertip_midpoint_pos,
-    fingertip_midpoint_quat,
-    ctrl_target_fingertip_midpoint_pos,
-    ctrl_target_fingertip_midpoint_quat,
-    jacobian_type,
-    rot_error_type,
-    ):
-    """Compute task-space error between target Franka fingertip pose and current pose."""
-    # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
+# def get_pose_error(
+#     fingertip_midpoint_pos,
+#     fingertip_midpoint_quat,
+#     ctrl_target_fingertip_midpoint_pos,
+#     ctrl_target_fingertip_midpoint_quat,
+#     jacobian_type,
+#     rot_error_type,
+#     ):
+#     """Compute task-space error between target Franka fingertip pose and current pose."""
+#     # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
 
-    # Compute pos error
-    pos_error = ctrl_target_fingertip_midpoint_pos - fingertip_midpoint_pos
+#     # Compute pos error NOTE: factory will no longer work - changed for adm control
+#     pos_error = fingertip_midpoint_pos - ctrl_target_fingertip_midpoint_pos
 
-    # Compute rot error
-    if jacobian_type == "geometric":  # See example 2.9.8; note use of J_g and transformation between rotation vectors
-        # Compute quat error (i.e., difference quat)
-        # Reference: https://personal.utdallas.edu/~sxb027100/dock/quat.html
+#     # Compute rot error
+#     if jacobian_type == "geometric":  # See example 2.9.8; note use of J_g and transformation between rotation vectors
+#         # Compute quat error (i.e., difference quat)
+#         # Reference: https://personal.utdallas.edu/~sxb027100/dock/quat.html
 
-        # Check for shortest path using quaternion dot product.
-        quat_dot = (ctrl_target_fingertip_midpoint_quat * fingertip_midpoint_quat).sum(dim=1, keepdim=True)
-        ctrl_target_fingertip_midpoint_quat = torch.where(
-            quat_dot.expand(-1, 4) >= 0, ctrl_target_fingertip_midpoint_quat, -ctrl_target_fingertip_midpoint_quat
-        )
+#         # Check for shortest path using quaternion dot product.
+#         quat_dot = (ctrl_target_fingertip_midpoint_quat * fingertip_midpoint_quat).sum(dim=1, keepdim=True)
+#         ctrl_target_fingertip_midpoint_quat = torch.where(
+#             quat_dot.expand(-1, 4) >= 0, ctrl_target_fingertip_midpoint_quat, -ctrl_target_fingertip_midpoint_quat
+#         )
 
-        fingertip_midpoint_quat_norm = torch_utils.quat_mul(
-            fingertip_midpoint_quat, torch_utils.quat_conjugate(fingertip_midpoint_quat)
-        )[
-            :, 0
-        ]  # scalar component
-        fingertip_midpoint_quat_inv = torch_utils.quat_conjugate(
-            fingertip_midpoint_quat
-        ) / fingertip_midpoint_quat_norm.unsqueeze(-1)
-        quat_error = torch_utils.quat_mul(ctrl_target_fingertip_midpoint_quat, fingertip_midpoint_quat_inv)
+#         fingertip_midpoint_quat_norm = torch_utils.quat_mul(
+#             fingertip_midpoint_quat, torch_utils.quat_conjugate(fingertip_midpoint_quat)
+#         )[
+#             :, 0
+#         ]  # scalar component
+#         fingertip_midpoint_quat_inv = torch_utils.quat_conjugate(
+#             fingertip_midpoint_quat
+#         ) / fingertip_midpoint_quat_norm.unsqueeze(-1)
+#         quat_error = torch_utils.quat_mul(ctrl_target_fingertip_midpoint_quat, fingertip_midpoint_quat_inv)
 
-        # Convert to axis-angle error
-        axis_angle_error = axis_angle_from_quat(quat_error)
+#         # Convert to axis-angle error
+#         axis_angle_error = -axis_angle_from_quat(quat_error)
 
-    if rot_error_type == "quat":
-        return pos_error, quat_error
-    elif rot_error_type == "axis_angle":
-        return pos_error, axis_angle_error
-
+#     if rot_error_type == "quat":
+#         return pos_error, quat_error
+#     elif rot_error_type == "axis_angle":
+#         return pos_error, axis_angle_error
 
 def get_delta_dof_pos(delta_pose, ik_method, jacobian, device):
     """Get delta Franka DOF position from delta pose using specified IK method."""
@@ -303,67 +302,167 @@ def compute_dof_state(
 
     return q_next, qd_next, xddot, e_task
 
-def compute_dof_state_naive(
+def get_pose_error(
+    cur_pos, cur_quat,
+    tgt_pos, tgt_quat,
+    jacobian_type="geometric",
+    rot_error_type="axis_angle",
+):
+    """
+    Returns errors as (current - target) for BOTH position and orientation.
+    Assumes unit quaternions. Uses shortest-arc convention.
+    """
+    # 1) Position error: current - target  (matches admittance F_sd = K*e + D*xdot_ref)
+    pos_error = cur_pos - tgt_pos
+
+    # 2) Orientation error: current - target
+    # Shortest path: flip target if dot<0
+    dot = (tgt_quat * cur_quat).sum(dim=1, keepdim=True)
+    tgt = torch.where(dot >= 0, tgt_quat, -tgt_quat)
+
+    # For unit quats, inverse == conjugate
+    tgt_inv = torch_utils.quat_conjugate(tgt)
+    # q_rel = cur ∘ tgt^{-1}  (gives “current − target”)
+    q_rel  = torch_utils.quat_mul(cur_quat, tgt_inv)
+
+    if rot_error_type == "quat":
+        rot_error = q_rel  # expresses current relative to target
+    else:
+        # axis-angle from q_rel (already “current − target”)
+        rot_error = axis_angle_from_quat(q_rel)
+
+    return pos_error, rot_error
+
+def compute_dof_state_admittance(
     cfg,
     dof_pos, dof_vel,
     eef_pos, eef_quat,
-    eef_linvel, eef_angvel,
-    jacobian, arm_mass_matrix, # jacobian at eef
-    ctrl_target_eef_pos, ctrl_target_eef_quat,
-    task_prop_gains, task_deriv_gains,
-    dt, F_ext, device,
-    dead_zone_thresholds=None,
+    eef_linvel, eef_angvel,      # not used inside the law anymore
+    jacobian,
+    ctrl_target_eef_pos, 
+    ctrl_target_eef_quat,
+    dt, device,
+    xdot_ref,                    # (B,6) controller internal state (pass in/out)
+    F_ext=None,                  # (B,6), default zeros
+    Kx=200.0, Dx=None, mx=5.0,
+    Kr=50.0,  Dr=None, mr=0.2,
+    lam=1e-2,
+    rot_scale=0.25,
+    v_task_limits=(0.25, 0.6),    # (lin m/s, ang rad/s)
+    qd_limit=1.5,
 ):
-    """
-    Compute Xarm DOF state using task-space admittance control.
-    """
     B, _ = dof_pos.shape
     n = 7
+    if F_ext is None:
+        F_ext = torch.zeros(B, 6, device=device)
 
-    # 1) Pose error (pos + axis-angle)
+    # --- pose error (pos + axis-angle)
     pos_err, aa_err = get_pose_error(
-        eef_pos,
-        eef_quat,
-        ctrl_target_eef_pos,
-        ctrl_target_eef_quat,
-        jacobian_type="geometric",
-        rot_error_type="axis_angle",
+        eef_pos, eef_quat,
+        ctrl_target_eef_pos, ctrl_target_eef_quat,
+        jacobian_type="geometric", rot_error_type="axis_angle",
     )
-    e_task = torch.cat((pos_err, aa_err), dim=1)  # (B,6)
-    xdot_now = torch.cat((eef_linvel, eef_angvel), dim=1)  # (B,6)
+    e_task = torch.cat((pos_err, rot_scale * aa_err), dim=1)  # (B,6)
 
-    # 2) Task-space inertia (Mx)
-    Mq_inv = torch.inverse(arm_mass_matrix)  # (B,n,n) - M_inv in joint space
-    J_T = jacobian.transpose(1, 2)            # (B,n,6)
-    Mx = torch.inverse(torch.bmm(jacobian, torch.bmm(Mq_inv, JT)))  # (B,6,6) - M in task space
+    # --- virtual mass and gains
+    Ma = torch.diag_embed(torch.tensor([mx, mx, mx, mr, mr, mr], device=device).repeat(B, 1))
+    if Dx is None: Dx = 63
+    if Dr is None: Dr = 6.3
+    K = torch.tensor([Kx, Kx, Kx, Kr, Kr, Kr], device=device).repeat(B, 1)
+    D = torch.tensor([Dx, Dx, Dx, Dr, Dr, Dr], device=device).repeat(B, 1)
 
-    # 3) Spring-damper (admittance) term — separate linear/rotational parts
-    spring_damper = torch.zeros_like(e_task)
-    # linear components
-    spring_damper[:, 0:3] = (
-        task_prop_gains[:, 0:3] * e_task[:, 0:3]
-        + task_deriv_gains[:, 0:3] * eef_linvel
+    # --- admittance law on internal state
+    F_sd  = K * e_task + D * xdot_ref
+    xddot = torch.linalg.solve(Ma, (F_ext - F_sd))
+
+    xdot_ref = xdot_ref + dt * xddot
+
+    # limits
+    lin_max, ang_max = v_task_limits
+    xdot_ref[:, 0:3] = torch.clamp(xdot_ref[:, 0:3], -lin_max, lin_max)
+    xdot_ref[:, 3:6] = torch.clamp(xdot_ref[:, 3:6], -ang_max, ang_max)
+
+    # --- damped pseudoinverse
+    JT  = jacobian.transpose(1, 2)              # (B,n,6)
+    I6  = torch.eye(6, device=device).expand(B, 6, 6)
+    J_pinv = torch.bmm(JT, torch.linalg.inv(torch.bmm(jacobian, JT) + (lam**2) * I6))
+
+    qd_next = torch.bmm(J_pinv, xdot_ref.unsqueeze(-1)).squeeze(-1)
+    qd_next = torch.clamp(qd_next, -qd_limit, qd_limit)
+
+    q_next  = dof_pos[:, :n] + dt * qd_next
+    return q_next, qd_next, xddot, e_task, xdot_ref
+
+_DEBUG_COUNTER = {"k": 0}
+
+def compute_dof_state_admittance_debug(
+    *args, print_every=1, name="adm", **kwargs
+):
+    out = compute_dof_state_admittance(*args, **kwargs)
+    q_next, qd_next, xddot, e_task, xdot_ref = out
+
+    with torch.no_grad():
+        # Unpack inputs we need for diagnostics
+        (
+            cfg, dof_pos, dof_vel, eef_pos, eef_quat, eef_linvel, eef_angvel,
+            jacobian, ctrl_target_eef_pos, ctrl_target_eef_quat, dt, device,
+            xdot_ref_in, F_ext, Kx, Dx, mx, Kr, Dr, mr, lam, rot_scale,
+            v_task_limits, qd_limit
+        ) = _recover_args_for_debug(*args, **kwargs)
+
+        B = dof_pos.shape[0]
+        JT = jacobian.transpose(1, 2)
+        JJt = torch.bmm(jacobian, JT)
+        # Condition number
+        cond = torch.linalg.cond(JJt)  # (B,)
+
+        # Quaternion sanity
+        q_norm_err = (eef_quat.norm(dim=1) - 1.0).abs().mean()
+
+        # Error split
+        pos_err = e_task[:, :3]
+        rot_err = e_task[:, 3:]
+
+        # Mapping residual: are we tracking xdot_ref?
+        xdot_map = torch.bmm(jacobian, qd_next.unsqueeze(-1)).squeeze(-1)
+        resid = (xdot_ref - xdot_map).norm(dim=1)  # per-env
+        resid_rel = resid / (xdot_ref.norm(dim=1).clamp_min(1e-8))
+
+        # Clamping stats
+        lin_max, ang_max = v_task_limits
+        xref_sat_lin = (xdot_ref[:, :3].abs() >= lin_max - 1e-12).float().mean()
+        xref_sat_rot = (xdot_ref[:, 3:].abs() >= ang_max - 1e-12).float().mean()
+        qd_sat = (qd_next.abs() >= qd_limit - 1e-12).float().mean()
+
+        k = _DEBUG_COUNTER["k"]
+        if k % print_every == 0:
+            print(
+                f"[{name}] step={k} "
+                f"|e_lin|={pos_err.norm(dim=1).mean():.3e} e_lin_x={pos_err[:,0].mean():+.3e} "
+                f"|e_rot|={rot_err.norm(dim=1).mean():.3e} "
+                f"|xddot|={xddot.norm(dim=1).mean():.3e} "
+                f"|xdot_ref|={xdot_ref.norm(dim=1).mean():.3e} "
+                f"|qdot|={qd_next.norm(dim=1).mean():.3e} "
+                f"cond(JJ^T)={cond.mean():.3e} "
+                f"resid=||J qdot - xdot_ref||={resid.mean():.3e} "
+                f"rel={resid_rel.mean():.3e} "
+                f"xref_sat(lin,rot)=({xref_sat_lin:.2f},{xref_sat_rot:.2f}) "
+                f"qd_sat={qd_sat:.2f} "
+                f"|q|-1={q_norm_err:.2e}"
+            )
+        _DEBUG_COUNTER["k"] = k + 1
+
+    return out
+
+def _recover_args_for_debug(
+    cfg, dof_pos, dof_vel, eef_pos, eef_quat, eef_linvel, eef_angvel,
+    jacobian, ctrl_target_eef_pos, ctrl_target_eef_quat, dt, device, xdot_ref,
+    F_ext=None, Kx=200.0, Dx=None, mx=5.0, Kr=50.0, Dr=None, mr=0.2,
+    lam=1e-3, rot_scale=1.0, v_task_limits=(0.5, 1.0), qd_limit=1.5
+):
+    return (
+        cfg, dof_pos, dof_vel, eef_pos, eef_quat, eef_linvel, eef_angvel,
+        jacobian, ctrl_target_eef_pos, ctrl_target_eef_quat, dt, device, xdot_ref,
+        F_ext, Kx, Dx, mx, Kr, Dr, mr, lam, rot_scale, v_task_limits, qd_limit
     )
-    # rotational components
-    spring_damper[:, 3:6] = (
-        task_prop_gains[:, 3:6] * e_task[:, 3:6]
-        + task_deriv_gains[:, 3:6] * eef_angvel
-    )
 
-    # 4) Admittance control law: xddot = Mx^{-1} (F_ext - (K e + D xdot))
-    F_net = F_ext - spring_damper # NOTE: F at eef, spring_damper at fingertip
-
-    xddot = torch.bmm(torch.inverse(Mx), F_net.unsqueeze(-1)).squeeze(-1)  # (B,6)
-
-    # 5) Integrate in task-space (semi-implicit)
-    xdot_des = xdot_now + dt * xddot  # (B,6)
-
-    # 6) Map to joint velocities using Jacobian pseudoinverse
-    JJt_inv = torch.inverse(torch.bmm(jacobian, JT))  # (B,6,6)
-    J_pinv = torch.bmm(JT, JJt_inv)                   # (B,n,6)
-    qd_next = torch.bmm(J_pinv, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
-
-    # 7) Integrate joint positions
-    q_next = dof_pos[:, 0:7] + dt * qd_next
-
-    return q_next, qd_next, xddot, e_task

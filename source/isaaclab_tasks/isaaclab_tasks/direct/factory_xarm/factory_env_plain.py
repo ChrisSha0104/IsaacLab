@@ -74,6 +74,8 @@ class FactoryEnvPlain(DirectRLEnv):
         self.arm_dof_idx, _ = self._robot.find_joints("joint.*")
         self.gripper_dof_idx, _ = self._robot.find_joints("gripper")
 
+        self.eef_vel = torch.zeros((self.num_envs, 6), device=self.device)
+
         # Tensors for finite-differencing.
         self.last_update_timestamp = 0.0  # Note: This is for finite differencing body velocities.
         self.prev_fingertip_pos = torch.zeros((self.num_envs, 3), device=self.device)
@@ -159,11 +161,12 @@ class FactoryEnvPlain(DirectRLEnv):
         prev_actions = self.actions.clone()
 
         obs_dict = {
-            "fingertip_pos": self.fingertip_midpoint_pos,
+            "fingertip_pos": self.eef_pos,
             "fingertip_pos_rel_fixed": self.fingertip_midpoint_pos - noisy_fixed_pos,
             "fingertip_quat": self.fingertip_midpoint_quat,
             "ee_linvel": self.ee_linvel_fd,
             "ee_angvel": self.ee_angvel_fd,
+            "joint_pos": self.joint_pos[:, 0:7],
             "prev_actions": prev_actions,
         }
 
@@ -286,7 +289,7 @@ class FactoryEnvPlain(DirectRLEnv):
         #     device=self.device,
         #     dead_zone_thresholds=self.dead_zone_thresholds,
         # )
-        self.arm_joint_pose_target, self.joint_vel_target, x_acc, _ = factory_control.compute_dof_state_naive(
+        self.arm_joint_pose_target, self.joint_vel_target, x_acc, _, self.eef_vel = factory_control.compute_dof_state_admittance(
             cfg=self.cfg,
             dof_pos=self.joint_pos,
             dof_vel=self.joint_vel,
@@ -295,15 +298,12 @@ class FactoryEnvPlain(DirectRLEnv):
             eef_linvel=self.fingertip_midpoint_linvel, # actually eef linvel
             eef_angvel=self.fingertip_midpoint_angvel,
             jacobian=self.eef_jacobian,
-            arm_mass_matrix=self.arm_mass_matrix,
             ctrl_target_eef_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_eef_quat=ctrl_target_fingertip_midpoint_quat,
-            task_prop_gains=self.task_prop_gains,
-            task_deriv_gains=self.task_deriv_gains,
-            dt=self.physics_dt,
-            F_ext=torch.zeros((self.num_envs, 6), device=self.device),
+            xdot_ref=self.eef_vel,
+            dt=self.physics_dt * self.cfg.decimation,
+            F_ext=None,
             device=self.device,
-            dead_zone_thresholds=self.dead_zone_thresholds,
         )
 
         self._robot.set_joint_position_target(self.arm_joint_pose_target, joint_ids=self.arm_dof_idx)
@@ -318,7 +318,7 @@ class FactoryEnvPlain(DirectRLEnv):
         """
         self._compute_intermediate_values(dt=self.physics_dt)
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        return time_out, time_out
+        return False, False
 
     def _get_rewards(self):
         """Update rewards and compute success statistics."""
