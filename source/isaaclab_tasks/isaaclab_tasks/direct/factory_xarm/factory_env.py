@@ -76,6 +76,8 @@ class FactoryEnv(DirectRLEnv):
         self.arm_dof_idx, _ = self._robot.find_joints("joint.*")
         self.gripper_dof_idx, _ = self._robot.find_joints("gripper")
 
+        self.eef_vel = torch.zeros((self.num_envs, 6), device=self.device)
+
         # Tensors for finite-differencing.
         self.last_update_timestamp = 0.0  # Note: This is for finite differencing body velocities.
         self.prev_fingertip_pos = torch.zeros((self.num_envs, 3), device=self.device)
@@ -333,24 +335,21 @@ class FactoryEnv(DirectRLEnv):
         ctrl_target_fingertip_midpoint_quat,
         ctrl_target_gripper_dof_pos=0.0, # default open
         ):
-        self.arm_joint_pose_target, self.joint_vel_target, x_acc, _ = factory_control.compute_dof_state(
+        self.arm_joint_pose_target, self.joint_vel_target, x_acc, _, self.eef_vel = factory_control.compute_dof_state_admittance(
             cfg=self.cfg,
             dof_pos=self.joint_pos,
             dof_vel=self.joint_vel,
-            fingertip_midpoint_pos=self.fingertip_midpoint_pos,
-            fingertip_midpoint_quat=self.fingertip_midpoint_quat,
-            fingertip_midpoint_linvel=self.fingertip_midpoint_linvel,
-            fingertip_midpoint_angvel=self.fingertip_midpoint_angvel,
+            eef_pos=self.fingertip_midpoint_pos,
+            eef_quat=self.fingertip_midpoint_quat,
+            eef_linvel=self.fingertip_midpoint_linvel,
+            eef_angvel=self.fingertip_midpoint_angvel,
             jacobian=self.fingertip_midpoint_jacobian,
-            arm_mass_matrix=self.arm_mass_matrix,
-            ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
-            ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-            task_prop_gains=self.task_prop_gains,
-            task_deriv_gains=self.task_deriv_gains,
+            ctrl_target_eef_pos=ctrl_target_fingertip_midpoint_pos,
+            ctrl_target_eef_quat=ctrl_target_fingertip_midpoint_quat,
+            xdot_ref=self.eef_vel,
             dt=self.physics_dt,
-            F_ext=torch.zeros((self.num_envs, 6), device=self.device),
+            F_ext=None,
             device=self.device,
-            dead_zone_thresholds=self.dead_zone_thresholds,
         )
 
         self._robot.set_joint_position_target(self.arm_joint_pose_target, joint_ids=self.arm_dof_idx)

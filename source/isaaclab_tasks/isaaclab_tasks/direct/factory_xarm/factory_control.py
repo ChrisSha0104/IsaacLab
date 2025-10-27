@@ -100,49 +100,48 @@ def compute_dof_torque(
     dof_torque = torch.clamp(dof_torque, min=-100.0, max=100.0)
     return dof_torque, task_wrench
 
+def get_pose_error(
+    fingertip_midpoint_pos,
+    fingertip_midpoint_quat,
+    ctrl_target_fingertip_midpoint_pos,
+    ctrl_target_fingertip_midpoint_quat,
+    jacobian_type,
+    rot_error_type,
+    ):
+    """Compute task-space error between target Franka fingertip pose and current pose."""
+    # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
 
-# def get_pose_error(
-#     fingertip_midpoint_pos,
-#     fingertip_midpoint_quat,
-#     ctrl_target_fingertip_midpoint_pos,
-#     ctrl_target_fingertip_midpoint_quat,
-#     jacobian_type,
-#     rot_error_type,
-#     ):
-#     """Compute task-space error between target Franka fingertip pose and current pose."""
-#     # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
+    # Compute pos error NOTE: factory will no longer work - changed for adm control
+    pos_error = fingertip_midpoint_pos - ctrl_target_fingertip_midpoint_pos
 
-#     # Compute pos error NOTE: factory will no longer work - changed for adm control
-#     pos_error = fingertip_midpoint_pos - ctrl_target_fingertip_midpoint_pos
+    # Compute rot error
+    if jacobian_type == "geometric":  # See example 2.9.8; note use of J_g and transformation between rotation vectors
+        # Compute quat error (i.e., difference quat)
+        # Reference: https://personal.utdallas.edu/~sxb027100/dock/quat.html
 
-#     # Compute rot error
-#     if jacobian_type == "geometric":  # See example 2.9.8; note use of J_g and transformation between rotation vectors
-#         # Compute quat error (i.e., difference quat)
-#         # Reference: https://personal.utdallas.edu/~sxb027100/dock/quat.html
+        # Check for shortest path using quaternion dot product.
+        quat_dot = (ctrl_target_fingertip_midpoint_quat * fingertip_midpoint_quat).sum(dim=1, keepdim=True)
+        ctrl_target_fingertip_midpoint_quat = torch.where(
+            quat_dot.expand(-1, 4) >= 0, ctrl_target_fingertip_midpoint_quat, -ctrl_target_fingertip_midpoint_quat
+        )
 
-#         # Check for shortest path using quaternion dot product.
-#         quat_dot = (ctrl_target_fingertip_midpoint_quat * fingertip_midpoint_quat).sum(dim=1, keepdim=True)
-#         ctrl_target_fingertip_midpoint_quat = torch.where(
-#             quat_dot.expand(-1, 4) >= 0, ctrl_target_fingertip_midpoint_quat, -ctrl_target_fingertip_midpoint_quat
-#         )
+        fingertip_midpoint_quat_norm = torch_utils.quat_mul(
+            fingertip_midpoint_quat, torch_utils.quat_conjugate(fingertip_midpoint_quat)
+        )[
+            :, 0
+        ]  # scalar component
+        fingertip_midpoint_quat_inv = torch_utils.quat_conjugate(
+            fingertip_midpoint_quat
+        ) / fingertip_midpoint_quat_norm.unsqueeze(-1)
+        quat_error = torch_utils.quat_mul(ctrl_target_fingertip_midpoint_quat, fingertip_midpoint_quat_inv)
 
-#         fingertip_midpoint_quat_norm = torch_utils.quat_mul(
-#             fingertip_midpoint_quat, torch_utils.quat_conjugate(fingertip_midpoint_quat)
-#         )[
-#             :, 0
-#         ]  # scalar component
-#         fingertip_midpoint_quat_inv = torch_utils.quat_conjugate(
-#             fingertip_midpoint_quat
-#         ) / fingertip_midpoint_quat_norm.unsqueeze(-1)
-#         quat_error = torch_utils.quat_mul(ctrl_target_fingertip_midpoint_quat, fingertip_midpoint_quat_inv)
+        # Convert to axis-angle error
+        axis_angle_error = -axis_angle_from_quat(quat_error)
 
-#         # Convert to axis-angle error
-#         axis_angle_error = -axis_angle_from_quat(quat_error)
-
-#     if rot_error_type == "quat":
-#         return pos_error, quat_error
-#     elif rot_error_type == "axis_angle":
-#         return pos_error, axis_angle_error
+    if rot_error_type == "quat":
+        return pos_error, quat_error
+    elif rot_error_type == "axis_angle":
+        return pos_error, axis_angle_error
 
 def get_delta_dof_pos(delta_pose, ik_method, jacobian, device):
     """Get delta Franka DOF position from delta pose using specified IK method."""
@@ -302,7 +301,7 @@ def compute_dof_state(
 
     return q_next, qd_next, xddot, e_task
 
-def get_pose_error(
+def get_task_space_error(
     cur_pos, cur_quat,
     tgt_pos, tgt_quat,
     jacobian_type="geometric",
@@ -356,8 +355,8 @@ def compute_dof_state_admittance(
     if F_ext is None:
         F_ext = torch.zeros(B, 6, device=device)
 
-    # --- pose error (pos + axis-angle)
-    pos_err, aa_err = get_pose_error(
+    # --- task space error (pos + axis-angle)
+    pos_err, aa_err = get_task_space_error(
         eef_pos, eef_quat,
         ctrl_target_eef_pos, ctrl_target_eef_quat,
         jacobian_type="geometric", rot_error_type="axis_angle",

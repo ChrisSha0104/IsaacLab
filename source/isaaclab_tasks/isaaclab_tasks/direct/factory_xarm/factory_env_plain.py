@@ -270,25 +270,6 @@ class FactoryEnvPlain(DirectRLEnv):
         ctrl_target_fingertip_midpoint_quat,
         ctrl_target_gripper_dof_pos=0.0, # default open
         ):
-        # self.arm_joint_pose_target, self.joint_vel_target, x_acc, _ = factory_control.compute_dof_state(
-        #     cfg=self.cfg,
-        #     dof_pos=self.joint_pos,
-        #     dof_vel=self.joint_vel,
-        #     fingertip_midpoint_pos=self.fingertip_midpoint_pos,
-        #     fingertip_midpoint_quat=self.fingertip_midpoint_quat,
-        #     fingertip_midpoint_linvel=self.fingertip_midpoint_linvel,
-        #     fingertip_midpoint_angvel=self.fingertip_midpoint_angvel,
-        #     jacobian=self.fingertip_midpoint_jacobian,
-        #     arm_mass_matrix=self.arm_mass_matrix,
-        #     ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
-        #     ctrl_target_fingertip_midpoint_quat=ctrl_target_fingertip_midpoint_quat,
-        #     task_prop_gains=self.task_prop_gains,
-        #     task_deriv_gains=self.task_deriv_gains,
-        #     dt=self.physics_dt,
-        #     F_ext=torch.zeros((self.num_envs, 6), device=self.device),
-        #     device=self.device,
-        #     dead_zone_thresholds=self.dead_zone_thresholds,
-        # )
         self.arm_joint_pose_target, self.joint_vel_target, x_acc, _, self.eef_vel = factory_control.compute_dof_state_admittance(
             cfg=self.cfg,
             dof_pos=self.joint_pos,
