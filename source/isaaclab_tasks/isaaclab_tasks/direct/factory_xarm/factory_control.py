@@ -111,8 +111,8 @@ def get_pose_error(
     """Compute task-space error between target Franka fingertip pose and current pose."""
     # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
 
-    # Compute pos error
-    pos_error = ctrl_target_fingertip_midpoint_pos - fingertip_midpoint_pos
+    # Compute pos error 
+    pos_error = ctrl_target_fingertip_midpoint_pos - fingertip_midpoint_pos 
 
     # Compute rot error
     if jacobian_type == "geometric":  # See example 2.9.8; note use of J_g and transformation between rotation vectors
