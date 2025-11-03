@@ -192,25 +192,27 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dt = env.unwrapped.step_dt
 
     # load traj & object data
-    eps_idx_key = "episode_0003"
+    eps_idx_key = "episode_0001"
 
     # load obj states
-    obj_states_path: str = "/home/shuo/projects/IsaacLab/logs/data/obj_states/object_states.npz"
+    obj_states_path: str = "logs/data/teleop_gear_mesh_9/obj_states/object_states.npz"
     obj_data = np.load(obj_states_path, allow_pickle=True)
     gear2base_mat = obj_data[f"{eps_idx_key}"][0]
-    gear2base_pos = gear2base_mat[:3, 3]
-    gear2base_quat = np.roll(R.from_matrix(gear2base_mat[:3, :3]).as_quat(), 1)
-    import pdb; pdb.set_trace()
-    gearbase2base_mat = obj_data[f"{eps_idx_key}"][1]
+    gear2base_pos = gear2base_mat[:3, 3] + np.array([-0.02025, 0.0, 0.0])
+    gear2base_pos[2] = -0.0175
+    print("gear2base_pos:", gear2base_pos)
+    gear2base_quat = np.array([1.0, 0.0, 0.0, 0.0])
+    gearbase2base_mat = obj_data[f"episode_0006"][1]
     gearbase2base_pos = gearbase2base_mat[:3, 3]
-    gearbase2base_quat = np.roll(R.from_matrix(gearbase2base_mat[:3, :3]).as_quat(), 1)
+    gearbase2base_quat = np.array([1.0, 0.0, 0.0, 0.0])
 
     # load trajectories
-    data_path: str = "logs/data/robot_trajectories.npz"
+    data_path: str = "logs/data/teleop_gear_mesh_9/robot_states/robot_trajectories.npz"
     data = np.load(data_path, allow_pickle=True)
 
     pos = torch.from_numpy(data[f"{eps_idx_key}/obs.eef_pos"]).to(env.device)
     quat = torch.from_numpy(data[f"{eps_idx_key}/obs.eef_quat"]).to(env.device)
+    gripper = torch.from_numpy(data[f"{eps_idx_key}/obs.gripper"]).to(env.device)
     qpos = data[f"{eps_idx_key}/obs.qpos"]
 
     T = pos.shape[0]
@@ -220,10 +222,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set to initial pose
     env.unwrapped._set_franka_to_default_pose([qpos[0].tolist()], env_ids=torch.tensor([0], device=env.device))
     env.unwrapped._set_gear_mesh_state(
-        [gear2base_pos.tolist()], 
-        [gear2base_quat.tolist()], 
-        [gearbase2base_pos.tolist()], 
-        [gearbase2base_quat.tolist()],
+        gear_pos=torch.from_numpy(gear2base_pos).to(env.device).unsqueeze(0), 
+        gear_quat=torch.from_numpy(gear2base_quat).to(env.device).unsqueeze(0), 
+        base_pos=torch.from_numpy(gearbase2base_pos).to(env.device).unsqueeze(0), 
+        base_quat=torch.from_numpy(gearbase2base_quat).to(env.device).unsqueeze(0),
         env_ids=torch.tensor([0], device=env.device)
     )
     obs = env.unwrapped._get_observations()
@@ -231,17 +233,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     obs_eef_pos = []
     obs_eef_quat = []
+    obs_gripper = []
     obs_qpos = []
 
     act_eef_pos = []
     act_eef_quat = []
+    act_gripper = []
 
     timestep = 0
-    # required: enables the flag for batched observations
-    _ = agent.get_batch_size(obs, 1)
-    # initialize RNN states if used
-    if agent.is_rnn:
-        agent.init_rnn()
     # simulate environment
     # note: We simplified the logic in rl-games player.py (:func:`BasePlayer.run()`) function in an
     #   attempt to have complete control over environment stepping. However, this removes other
@@ -251,15 +250,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # run everything in inference mode
         with torch.inference_mode():
             # convert obs to agent format
-            eef_pos = pos[timestep].unsqueeze(0)
+            eef_real_pos = pos[timestep].unsqueeze(0)
             eef_quat = quat[timestep].unsqueeze(0)
-            # fingertip_pos = torch_utils.tf_combine(
-            #     eef_quat,
-            #     eef_pos,
-            #     torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device),
-            #     torch.tensor([[0.0, 0.0, 0.17]], device=env.device),
-            # )[1]
-            actions = torch.cat([eef_pos, eef_quat], dim=-1)
+            gripper_pos = gripper[timestep].unsqueeze(0)
+            eef_sim_pos = torch_utils.tf_combine(
+                eef_quat,
+                eef_real_pos,
+                torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device),
+                torch.tensor([[0.0, 0.0, 0.235]], device=env.device),
+            )[1]
+            actions = torch.cat([eef_sim_pos, eef_quat, gripper_pos], dim=-1)
 
             obs_eef_pos.append(obs[0,:3].cpu().numpy())
             obs_eef_quat.append(obs[0,3:7].cpu().numpy())
@@ -282,12 +282,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             if timestep >= T:
                 break
 
-            # perform operations for terminated episodes
-            if len(dones) > 0:
-                # reset rnn state for terminated episodes
-                if agent.is_rnn and agent.states is not None:
-                    for s in agent.states:
-                        s[:, dones, :] = 0.0
         if args_cli.video:
             # exit the play loop after recording one video
             if timestep == args_cli.video_length:
