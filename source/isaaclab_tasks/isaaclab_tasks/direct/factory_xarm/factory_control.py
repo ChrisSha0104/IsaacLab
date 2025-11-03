@@ -111,8 +111,8 @@ def get_pose_error(
     """Compute task-space error between target Franka fingertip pose and current pose."""
     # Reference: https://ethz.ch/content/dam/ethz/special-interest/mavt/robotics-n-intelligent-systems/rsl-dam/documents/RobotDynamics2018/RD_HS2018script.pdf
 
-    # Compute pos error NOTE: factory will no longer work - changed for adm control
-    pos_error = fingertip_midpoint_pos - ctrl_target_fingertip_midpoint_pos
+    # Compute pos error
+    pos_error = ctrl_target_fingertip_midpoint_pos - fingertip_midpoint_pos
 
     # Compute rot error
     if jacobian_type == "geometric":  # See example 2.9.8; note use of J_g and transformation between rotation vectors
@@ -136,7 +136,7 @@ def get_pose_error(
         quat_error = torch_utils.quat_mul(ctrl_target_fingertip_midpoint_quat, fingertip_midpoint_quat_inv)
 
         # Convert to axis-angle error
-        axis_angle_error = -axis_angle_from_quat(quat_error)
+        axis_angle_error = axis_angle_from_quat(quat_error)
 
     if rot_error_type == "quat":
         return pos_error, quat_error
@@ -203,104 +203,6 @@ def _apply_task_space_gains(
     )
     return task_wrench
 
-def compute_dof_state(
-    cfg,
-    dof_pos, dof_vel,
-    fingertip_midpoint_pos, fingertip_midpoint_quat,
-    fingertip_midpoint_linvel, fingertip_midpoint_angvel,
-    jacobian, arm_mass_matrix, # jacobian at fingertip
-    ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat,
-    task_prop_gains, task_deriv_gains,
-    dt, F_ext, device,
-    dead_zone_thresholds=None,
-):
-    """
-    Compute Xarm DOF state using task-space admittance control.
-    """
-    B, _ = dof_pos.shape
-    n = 7
-
-    # 1) Pose error (pos + axis-angle)
-    pos_err, aa_err = get_pose_error(
-        fingertip_midpoint_pos,
-        fingertip_midpoint_quat,
-        ctrl_target_fingertip_midpoint_pos,
-        ctrl_target_fingertip_midpoint_quat,
-        jacobian_type="geometric",
-        rot_error_type="axis_angle",
-    )
-    e_task = torch.cat((pos_err, aa_err), dim=1)  # (B,6)
-    xdot_now = torch.cat((fingertip_midpoint_linvel, fingertip_midpoint_angvel), dim=1)  # (B,6)
-
-    # 2) Task-space inertia (Mx)
-    Mq_inv = torch.inverse(arm_mass_matrix)  # (B,n,n) - M_inv in joint space
-    JT = jacobian.transpose(1, 2)            # (B,n,6)
-    Mx = torch.inverse(torch.bmm(jacobian, torch.bmm(Mq_inv, JT)))  # (B,6,6) - M in task space
-
-    # 3) Spring-damper (admittance) term — separate linear/rotational parts
-    spring_damper = torch.zeros_like(e_task)
-    # linear components
-    spring_damper[:, 0:3] = (
-        task_prop_gains[:, 0:3] * e_task[:, 0:3]
-        + task_deriv_gains[:, 0:3] * fingertip_midpoint_linvel
-    )
-    # rotational components
-    spring_damper[:, 3:6] = (
-        task_prop_gains[:, 3:6] * e_task[:, 3:6]
-        + task_deriv_gains[:, 3:6] * fingertip_midpoint_angvel
-    )
-
-    # 4) Admittance control law: xddot = Mx^{-1} (F_ext - (K e + D xdot))
-    # if dead_zone_thresholds is not None:
-    #     th = dead_zone_thresholds
-    #     F_net = torch.where(
-    #         (F_ext - spring_damper).abs() < th,
-    #         torch.zeros_like(F_ext),
-    #         (F_ext - spring_damper).sign() * ((F_ext - spring_damper).abs() - th),
-    #     )
-    # else:
-    F_net = F_ext - spring_damper # NOTE: F at eef, spring_damper at fingertip
-
-    xddot = torch.bmm(torch.inverse(Mx), F_net.unsqueeze(-1)).squeeze(-1)  # (B,6)
-
-    # 5) Integrate in task-space (semi-implicit)
-    xdot_des = xdot_now + dt * xddot  # (B,6)
-
-    # # 6) Map to joint velocities using Jacobian pseudoinverse
-    # JJt_inv = torch.inverse(torch.bmm(jacobian, JT))  # (B,6,6)
-    # J_pinv = torch.bmm(JT, JJt_inv)                   # (B,n,6)
-    # qd_next = torch.bmm(J_pinv, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
-
-    # --- 6) Map to joint velocities with dynamic-consistent nullspace control ---
-
-    # J_hash = M⁻¹ Jᵀ Mx
-    J_hash = torch.bmm(Mq_inv, torch.bmm(JT, Mx))  # (B, n, 6)
-
-    # Primary task joint velocity
-    qd_task = torch.bmm(J_hash, xdot_des.unsqueeze(-1)).squeeze(-1)  # (B,n)
-
-    # # Nullspace projector N = I - J_hash * J
-    # I = torch.eye(n, device=device).unsqueeze(0).expand(B, -1, -1)   # (B,n,n)
-    # N = I - torch.bmm(J_hash, jacobian)                               # (B,n,n)
-
-    # # Secondary (null) objective: PD toward default posture with damping
-    # q_ref = torch.tensor(cfg.ctrl.default_dof_pos_tensor, device=device).unsqueeze(0).expand(B, -1)
-    # Kp_null = cfg.ctrl.kp_null
-    # Kd_null = cfg.ctrl.kd_null
-
-    # qd_null_des = Kp_null * (q_ref[:, :n] - dof_pos[:, :n]) - Kd_null * dof_vel[:, :n]   # (B,n)
-
-    # # Project null motion so it doesn't affect the task: J (N qd_null_des) ≈ 0
-    # qd_null = torch.bmm(N, qd_null_des.unsqueeze(-1)).squeeze(-1)     # (B,n)
-
-    # Combine
-    qd_next = qd_task #+ qd_null
-
-    # 7) Integrate joint positions
-    q_next = dof_pos[:, 0:7] + dt * qd_next
-
-    return q_next, qd_next, xddot, e_task
-
 def get_task_space_error(
     cur_pos, cur_quat,
     tgt_pos, tgt_quat,
@@ -343,11 +245,11 @@ def compute_dof_state_admittance(
     dt, device,
     xdot_ref,                    # (B,6) controller internal state (pass in/out)
     F_ext=None,                  # (B,6), default zeros
-    Kx=200.0, Dx=None, mx=5.0,
-    Kr=50.0,  Dr=None, mr=0.2,
+    Kx=500.0, Dx=None, mx=0.2,
+    Kr=4.0,  Dr=None, mr=0.02,
     lam=1e-2,
     rot_scale=0.25,
-    v_task_limits=(0.25, 0.6),    # (lin m/s, ang rad/s)
+    v_task_limits=(0.25, 0.6),    # (lin m/s, ang rad/s) # TODO: debug if needed?
     qd_limit=1.5,
 ):
     B, _ = dof_pos.shape
@@ -365,8 +267,8 @@ def compute_dof_state_admittance(
 
     # --- virtual mass and gains
     Ma = torch.diag_embed(torch.tensor([mx, mx, mx, mr, mr, mr], device=device).repeat(B, 1))
-    if Dx is None: Dx = 63
-    if Dr is None: Dr = 6.3
+    if Dx is None: Dx = 0.0
+    if Dr is None: Dr = 0.0
     K = torch.tensor([Kx, Kx, Kx, Kr, Kr, Kr], device=device).repeat(B, 1)
     D = torch.tensor([Dx, Dx, Dx, Dr, Dr, Dr], device=device).repeat(B, 1)
 
