@@ -245,17 +245,20 @@ def compute_dof_state_admittance(
     dt, device,
     xdot_ref,                    # (B,6) controller internal state (pass in/out)
     F_ext=None,                  # (B,6), default zeros
-    Kx=500.0, Dx=None, mx=0.2,
-    Kr=4.0,  Dr=None, mr=0.02,
+    Kx=1000.0, Dx=None, mx=0.1,
+    Kr=4.0,  Dr=None, mr=0.01,
     lam=1e-2,
     rot_scale=0.25,
     v_task_limits=(0.25, 0.6),    # (lin m/s, ang rad/s) # TODO: debug if needed?
     qd_limit=1.5,
+    alpha=1.0
 ):
     B, _ = dof_pos.shape
     n = 7
     if F_ext is None:
         F_ext = torch.zeros(B, 6, device=device)
+
+    F_ext = F_ext * alpha  # scale external force input
 
     # --- task space error (pos + axis-angle)
     pos_err, aa_err = get_task_space_error(
@@ -267,8 +270,8 @@ def compute_dof_state_admittance(
 
     # --- virtual mass and gains
     Ma = torch.diag_embed(torch.tensor([mx, mx, mx, mr, mr, mr], device=device).repeat(B, 1))
-    if Dx is None: Dx = 0.0
-    if Dr is None: Dr = 0.0
+    if Dx is None: Dx = 2.0 * math.sqrt(Kx * mx)
+    if Dr is None: Dr = 2.0 * math.sqrt(Kr * mr)
     K = torch.tensor([Kx, Kx, Kx, Kr, Kr, Kr], device=device).repeat(B, 1)
     D = torch.tensor([Dx, Dx, Dx, Dr, Dr, Dr], device=device).repeat(B, 1)
 
@@ -279,9 +282,9 @@ def compute_dof_state_admittance(
     xdot_ref = xdot_ref + dt * xddot
 
     # limits
-    lin_max, ang_max = v_task_limits
-    xdot_ref[:, 0:3] = torch.clamp(xdot_ref[:, 0:3], -lin_max, lin_max)
-    xdot_ref[:, 3:6] = torch.clamp(xdot_ref[:, 3:6], -ang_max, ang_max)
+    # lin_max, ang_max = v_task_limits
+    # xdot_ref[:, 0:3] = torch.clamp(xdot_ref[:, 0:3], -lin_max, lin_max)
+    # xdot_ref[:, 3:6] = torch.clamp(xdot_ref[:, 3:6], -ang_max, ang_max)
 
     # --- damped pseudoinverse
     JT  = jacobian.transpose(1, 2)              # (B,n,6)
@@ -289,7 +292,7 @@ def compute_dof_state_admittance(
     J_pinv = torch.bmm(JT, torch.linalg.inv(torch.bmm(jacobian, JT) + (lam**2) * I6))
 
     qd_next = torch.bmm(J_pinv, xdot_ref.unsqueeze(-1)).squeeze(-1)
-    qd_next = torch.clamp(qd_next, -qd_limit, qd_limit)
+    # qd_next = torch.clamp(qd_next, -qd_limit, qd_limit)
 
     q_next  = dof_pos[:, :n] + dt * qd_next
     return q_next, qd_next, xddot, e_task, xdot_ref

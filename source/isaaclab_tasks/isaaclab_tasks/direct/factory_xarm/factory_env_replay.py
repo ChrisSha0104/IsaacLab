@@ -12,6 +12,7 @@ import isaacsim.core.utils.torch as torch_utils
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
+from isaaclab.sensors import TiledCamera, ContactSensor
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import axis_angle_from_quat
@@ -53,6 +54,8 @@ class FactoryEnvReplay(DirectRLEnv):
         )
 
         # Set masses and frictions.
+        factory_utils.set_friction(self._held_asset, self.cfg_task.held_asset_cfg.friction, self.scene.num_envs)
+        factory_utils.set_friction(self._fixed_asset, self.cfg_task.fixed_asset_cfg.friction, self.scene.num_envs)
         factory_utils.set_friction(self._robot, self.cfg_task.robot_cfg.friction, self.scene.num_envs)
 
     def _init_tensors(self):
@@ -97,6 +100,8 @@ class FactoryEnvReplay(DirectRLEnv):
             "/World/envs/env_.*/Table", cfg, translation=(0.55, 0.0, 0.0), orientation=(0.70711, 0.0, 0.0, 0.70711)
         )
 
+        self.measure_force = self.cfg.measure_force
+
         self._robot = Articulation(self.cfg.robot)
         self._fixed_asset = Articulation(self.cfg_task.fixed_asset)
         self._held_asset = Articulation(self.cfg_task.held_asset)
@@ -104,6 +109,9 @@ class FactoryEnvReplay(DirectRLEnv):
             self._small_gear_asset = Articulation(self.cfg_task.small_gear_cfg)
             self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg)
 
+        if self.measure_force:
+            self.eef_contact_sensor = ContactSensor(self.cfg.eef_contact_sensor_cfg)
+            self.scene.sensors["eef_contact_sensor"] = self.eef_contact_sensor
 
         self.scene.clone_environments(copy_from_source=False)
         if self.device == "cpu":
@@ -142,6 +150,10 @@ class FactoryEnvReplay(DirectRLEnv):
         self.right_finger_jacobian = jacobians[:, self.right_finger_body_idx - 1, 0:6, 0:7]
         self.fingertip_midpoint_jacobian = (self.left_finger_jacobian + self.right_finger_jacobian) * 0.5
         self.arm_mass_matrix = self._robot.root_physx_view.get_generalized_mass_matrices()[:, 0:7, 0:7]
+
+        if self.measure_force:
+            self.eef_force = self.eef_contact_sensor.data.net_forces_w.squeeze(1) # (num_envs, 3)
+            self.F_ext = torch.cat([self.eef_force, torch.zeros((self.num_envs, 3), device=self.device)], dim=-1) # (num_envs, 6)
 
         self.joint_pos = self._robot.data.joint_pos.clone()
         self.joint_vel = self._robot.data.joint_vel.clone()
@@ -295,7 +307,7 @@ class FactoryEnvReplay(DirectRLEnv):
             ctrl_target_eef_quat=ctrl_target_fingertip_midpoint_quat,
             xdot_ref=self.eef_vel,
             dt=self.physics_dt,
-            F_ext=None,
+            F_ext=None, #self.F_ext if self.measure_force else None,
             device=self.device,
         )
 
