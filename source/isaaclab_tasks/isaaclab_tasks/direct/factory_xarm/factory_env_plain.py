@@ -282,7 +282,7 @@ class FactoryEnvPlain(DirectRLEnv):
             ctrl_target_eef_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_eef_quat=ctrl_target_fingertip_midpoint_quat,
             xdot_ref=self.eef_vel,
-            dt=self.physics_dt * self.cfg.decimation,
+            dt=self.physics_dt,# * self.cfg.decimation,
             F_ext=None,
             device=self.device,
         )
