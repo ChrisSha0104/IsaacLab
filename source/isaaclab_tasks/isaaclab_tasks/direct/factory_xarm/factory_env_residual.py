@@ -332,13 +332,13 @@ class FactoryEnvResidual(DirectRLEnv):
         rot_actions = rot_actions * self.rot_threshold
 
         ctrl_target_fingertip_midpoint_pos = self.fingertip_midpoint_pos + pos_actions
-        # To speed up learning, never allow the policy to move more than 5cm away from the base.
-        held_pos_action_frame = self.held_pos_obs_frame + self.init_held_pos_obs_noise
-        delta_pos = ctrl_target_fingertip_midpoint_pos - held_pos_action_frame
-        pos_error_clipped = torch.clip(
-            delta_pos, -self.cfg.ctrl.pos_action_bounds[0], self.cfg.ctrl.pos_action_bounds[1]
-        )
-        ctrl_target_fingertip_midpoint_pos = held_pos_action_frame + pos_error_clipped
+        # # To speed up learning, never allow the policy to move more than 5cm away from the base.
+        # held_pos_action_frame = self.held_pos_obs_frame + self.init_held_pos_obs_noise
+        # delta_pos = ctrl_target_fingertip_midpoint_pos - held_pos_action_frame
+        # pos_error_clipped = torch.clip(
+        #     delta_pos, -self.cfg.ctrl.pos_action_bounds[0], self.cfg.ctrl.pos_action_bounds[1]
+        # )
+        # ctrl_target_fingertip_midpoint_pos = held_pos_action_frame + pos_error_clipped
 
         # Convert to quat and set rot target
         angle = torch.norm(rot_actions, p=2, dim=-1)
