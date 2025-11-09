@@ -1,49 +1,63 @@
 import torch
 import numpy as np
 
+def quat_geodesic_angle(q1: torch.Tensor, q2: torch.Tensor, eps: float = 1e-8):
+    """
+    q1, q2: (..., 4) float tensors in [w, x, y, z] or [x, y, z, w]—either is fine
+            as long as both use the same convention.
+    Returns: (...,) radians in [0, pi]
+    """
+    # normalize
+    q1 = q1 / (q1.norm(dim=-1, keepdim=True).clamp_min(eps))
+    q2 = q2 / (q2.norm(dim=-1, keepdim=True).clamp_min(eps))
+
+    # dot, handle sign ambiguity
+    dot = torch.sum(q1 * q2, dim=-1).abs().clamp(-1 + eps, 1 - eps)
+
+    return 2.0 * torch.arccos(dot)
+
 class NearestNeighborBuffer:
-    def __init__(self, action_data_path: str, num_envs: int):
-        """
-        Expects keys per episode:
-          obs.eef_pos (T,3), obs.eef_quat (T,4), obs.gripper (T,1)
-          action.eef_pos (T,3), action.eef_quat (T,4), action.gripper (T,1)
-        """
-        flat = np.load(action_data_path, allow_pickle=True)
+    """
+    Batched nearest-neighbor action retriever with horizon caching.
+    Each call returns one action (N,8), reusing pre-fetched horizon actions.
+    """
+
+    def __init__(self, path: str, num_envs: int, horizon: int = 15):
+        # Load .npz or .pt dataset (expects obs.* and action.* keys per episode)
+        flat = np.load(path, allow_pickle=True)
         flat = {k: torch.as_tensor(v, dtype=torch.float32) for k, v in flat.items()}
 
-        # Group by episode
+        # Group by episode prefix (e.g., "episode_0000/")
         episodes = sorted({k.split("/", 1)[0] for k in flat})
-        data = {ep: {s.split("/", 1)[1]: flat[s] for s in flat if s.startswith(ep)} for ep in episodes}
+        data = {e: {s.split("/", 1)[1]: flat[s] for s in flat if s.startswith(e)} for e in episodes}
 
-        lens = torch.tensor([len(data[ep]["obs.gripper"]) for ep in episodes], dtype=torch.long)
-        T_max = int(lens.max().item())
+        # Compute max episode length and pad all to equal T
+        lengths = torch.tensor([len(data[e]["obs.gripper"]) for e in episodes])
+        T = int(lengths.max())
 
-        def pad_stack(key, dim):
-            out = torch.full((len(episodes), T_max, dim), float("nan"))
-            for i, ep in enumerate(episodes):
-                x = data[ep][key]
-                out[i, : x.shape[0]] = x
+        self._max_episode_length = T
+        self._total_episodes = len(episodes)
+        self._num_envs = num_envs
+
+        def pad(key, dim):
+            out = torch.full((len(episodes), T, dim), float("nan"))
+            for i, e in enumerate(episodes):
+                x = data[e][key]
+                out[i, :x.shape[0]] = x
             return out
 
-        self._episodes = episodes
-        self._episode_lengths = lens
-        self._max_episode_length = T_max
-        self._num_envs = num_envs
-        self._total_episodes = len(episodes)
+        # Store obs and action tensors (E,T,dim)
+        self._obs_pos, self._obs_quat, self._obs_grip = pad("obs.eef_pos",3), pad("obs.eef_quat",4), pad("obs.gripper",1)
+        self._act_pos, self._act_quat, self._act_grip = pad("action.eef_pos",3), pad("action.eef_quat",4), pad("action.gripper",1)
 
-        # Observations (used for NN)
-        self._obs_pos   = pad_stack("obs.eef_pos",   3)  # (E,T,3)
-        self._obs_quat  = pad_stack("obs.eef_quat",  4)  # (E,T,4)
-        self._obs_grip  = pad_stack("obs.gripper",   1)  # (E,T,1)
+        # Valid timestep mask (E,T)
+        self._mask = torch.zeros((len(episodes), T), dtype=torch.bool)
+        for i, L in enumerate(lengths): self._mask[i, :int(L)] = True
 
-        # Actions (returned at matched timestep)
-        self._act_pos   = pad_stack("action.eef_pos",  3)  # (E,T,3)
-        self._act_quat  = pad_stack("action.eef_quat", 4)  # (E,T,4)
-        self._act_grip  = pad_stack("action.gripper", 1)   # (E,T,1)
-
-        self._valid_mask = torch.zeros((len(episodes), T_max), dtype=torch.bool)
-        for i, L in enumerate(lens):
-            self._valid_mask[i, : int(L)] = True
+        # Shared horizon cache
+        self._horizon = int(horizon)
+        self._queued = None
+        self._q_ptr = self._horizon  # force refill first time
 
         print(f"Loaded NearestNeighborBuffer with {self._total_episodes} episodes; max length {self._max_episode_length}.")
 
@@ -53,45 +67,68 @@ class NearestNeighborBuffer:
     def get_max_episode_length(self) -> int:
         return int(self._max_episode_length)
 
+    def _nn_indices(self, ep_idx, pos, quat=None, grip=None, verbose = False):
+        """
+        Find nearest neighbor timestep per env using position (+optional quat/grip).
+        dist = pos_cm / 10 + ang_deg / 10 + 2 * grip_L1
+        """
+        dev = pos.device
+        obs_p, obs_q, obs_g = self._obs_pos.to(dev)[ep_idx], self._obs_quat.to(dev)[ep_idx], self._obs_grip.to(dev)[ep_idx]
+        mask = self._mask.to(dev)[ep_idx]
+
+        # Base distance: position (m→cm)
+        dist = 10 * torch.norm(obs_p - pos[:, None, :], dim=-1)  # (N,T)
+        if verbose:
+            print("pos_cm / 10 mean:", dist.nanmean().item())
+
+        # Optional quaternion term (deg / 10)
+        if quat is not None:
+            ang = torch.rad2deg(quat_geodesic_angle(obs_q, quat[:, None, :])) / 10
+            if verbose:
+                print("ang_deg / 10 mean:", ang.nanmean().item())
+            dist += ang
+
+        # Optional gripper L1 term (normalized)
+        if grip is not None:
+            d_grip = 2 * (obs_g.squeeze(-1) - grip.view(-1,1)).abs()
+            if verbose:
+                print("grip_L1 * 2 mean:", d_grip.nanmean().item())
+            dist += d_grip
+
+        # Mask invalid timesteps
+        dist = dist.masked_fill(~mask, float('inf'))
+        dist = torch.nan_to_num(dist, nan=float('inf'))
+
+        # Argmin index and valid length
+        t0 = dist.argmin(dim=1)
+        L  = mask.long().sum(dim=1)
+
+        return t0, L
+
     @torch.no_grad()
-    def get_actions(self, episode_idxs: torch.Tensor, fingertip_pos: torch.Tensor) -> torch.Tensor:
+    def get_actions(self, ep_idx: torch.Tensor, fingertip_pos: torch.Tensor,
+                    fingertip_quat: torch.Tensor | None = None,
+                    gripper: torch.Tensor | None = None) -> torch.Tensor:
         """
-        Nearest neighbor in obs.eef_pos within the selected episode,
-        return the paired actions at the same timestep.
-        Returns (N,8): [action_pos(3), action_quat(4), action_gripper(1)]
+        Returns one step of actions (N,8). Recomputes NN if cache is empty.
+        The horizon cache prefetches t..t+h-1 actions in batch.
         """
-        assert episode_idxs.ndim == 1
-        assert fingertip_pos.ndim == 2 and fingertip_pos.shape[-1] == 3
-        N, device = fingertip_pos.shape[0], fingertip_pos.device
+        N, dev = fingertip_pos.shape[0], fingertip_pos.device
 
-        # Move needed tensors to device
-        obs_pos = self._obs_pos.to(device)            # (E,T,3)
-        mask    = self._valid_mask.to(device)         # (E,T)
-        act_pos = self._act_pos.to(device)            # (E,T,3)
-        act_qua = self._act_quat.to(device)           # (E,T,4)
-        act_gr  = self._act_grip.to(device)           # (E,T,1)
+        # --- Refill cache if empty ---
+        if self._queued is None or self._q_ptr >= self._horizon:
+            t0, L = self._nn_indices(ep_idx, fingertip_pos, fingertip_quat, gripper)
+            ar = torch.arange(self._horizon, device=dev)
+            idx = torch.minimum(t0[:,None] + ar, (L-1).clamp(min=0)[:,None])  # clamp past end
 
-        # Select per-env episodes
-        obs_e = obs_pos[episode_idxs]                 # (N,T,3) # TODO: add noise?
-        m_e   = mask[episode_idxs]                    # (N,T)
-        ap_e  = act_pos[episode_idxs]
-        aq_e  = act_qua[episode_idxs]
-        ag_e  = act_gr[episode_idxs]
+            # Gather all actions in parallel (N,H,8)
+            act_p, act_q, act_g = self._act_pos.to(dev)[ep_idx], self._act_quat.to(dev)[ep_idx], self._act_grip.to(dev)[ep_idx]
+            g3,g4,g1 = idx.unsqueeze(-1).expand(-1,-1,3), idx.unsqueeze(-1).expand(-1,-1,4), idx.unsqueeze(-1).expand(-1,-1,1)
+            a_p, a_q, a_g = torch.gather(act_p,1,g3), torch.gather(act_q,1,g4), torch.gather(act_g,1,g1)
+            self._queued = torch.cat([a_p,a_q,a_g], dim=-1)  # (N,H,8)
+            self._q_ptr = 0
 
-        # NN over obs.eef_pos (mask padded to +inf)
-        dist2 = ((obs_e - fingertip_pos[:, None, :])**2).sum(-1)      # (N,T)
-        dist2 = dist2.masked_fill(~m_e, float('inf'))
-        idx   = dist2.argmin(dim=1)                                   # (N,)
-
-        # Gather paired actions at that timestep
-        t = idx.view(N, 1, 1)
-        a_pos = ap_e.gather(1, t.expand(N, 1, 3)).squeeze(1)          # (N,3)
-        a_qua = aq_e.gather(1, t.expand(N, 1, 4)).squeeze(1)          # (N,4)
-        a_grp = ag_e.gather(1, t.expand(N, 1, 1)).squeeze(1)          # (N,1)
-
-        # check nan in output
-        if torch.isnan(a_pos).any() or torch.isnan(a_qua).any() or torch.isnan(a_grp).any():
-            print("idx:", idx)
-            import pdb; pdb.set_trace()
-
-        return torch.cat([a_pos, a_qua, a_grp], dim=-1)               # (N,8)
+        # --- Pop next action ---
+        out = self._queued[:, self._q_ptr, :]
+        self._q_ptr += 1
+        return out

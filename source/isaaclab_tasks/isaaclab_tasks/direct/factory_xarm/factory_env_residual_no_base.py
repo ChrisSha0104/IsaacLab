@@ -25,13 +25,13 @@ from .factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG, FactoryEnvCfg
 from .nn_buffer import NearestNeighborBuffer
 
 
-class FactoryEnvResidual(DirectRLEnv):
+class FactoryEnvResidualNoBase(DirectRLEnv):
     cfg: FactoryEnvCfg
 
     def __init__(self, cfg: FactoryEnvCfg, render_mode: str | None = None, **kwargs):
         # Update number of obs/states
-        cfg.observation_space = sum([OBS_DIM_CFG[obs] for obs in cfg.residual_obs_order])
-        cfg.state_space = sum([STATE_DIM_CFG[state] for state in cfg.residual_state_order])
+        cfg.observation_space = sum([OBS_DIM_CFG[obs] for obs in cfg.residual_obs_order_no_base])
+        cfg.state_space = sum([STATE_DIM_CFG[state] for state in cfg.residual_state_order_no_base])
         cfg.action_space = cfg.residual_action_space # 7
         cfg.observation_space += cfg.action_space
         cfg.state_space += cfg.action_space
@@ -297,8 +297,8 @@ class FactoryEnvResidual(DirectRLEnv):
         """Get actor/critic inputs using asymmetric critic."""
         obs_dict, state_dict = self._get_factory_obs_state_dict()
 
-        obs_tensors = factory_utils.collapse_obs_dict(obs_dict, self.cfg.residual_obs_order + ["prev_actions"])
-        state_tensors = factory_utils.collapse_obs_dict(state_dict, self.cfg.residual_state_order + ["prev_actions"])
+        obs_tensors = factory_utils.collapse_obs_dict(obs_dict, self.cfg.residual_obs_order_no_base + ["prev_actions"])
+        state_tensors = factory_utils.collapse_obs_dict(state_dict, self.cfg.residual_state_order_no_base + ["prev_actions"])
 
         return {"policy": obs_tensors, "critic": state_tensors}
 

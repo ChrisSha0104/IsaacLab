@@ -24,8 +24,7 @@ from .factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG, FactoryEnvCfg
 
 from .nn_buffer import NearestNeighborBuffer
 
-
-class FactoryEnvResidual(DirectRLEnv):
+class FactoryEnvResidualAddDelta(DirectRLEnv):
     cfg: FactoryEnvCfg
 
     def __init__(self, cfg: FactoryEnvCfg, render_mode: str | None = None, **kwargs):
@@ -331,7 +330,7 @@ class FactoryEnvResidual(DirectRLEnv):
             rot_actions[:, 2] = -(rot_actions[:, 2] + 1.0) * 0.5  # [-1, 0]
         rot_actions = rot_actions * self.rot_threshold
 
-        ctrl_target_fingertip_midpoint_pos = self.fingertip_midpoint_pos + pos_actions
+        ctrl_target_fingertip_midpoint_pos = self.base_actions[:, 0:3] + pos_actions
         # To speed up learning, never allow the policy to move more than 5cm away from the base.
         held_pos_action_frame = self.held_pos_obs_frame + self.init_held_pos_obs_noise
         delta_pos = ctrl_target_fingertip_midpoint_pos - held_pos_action_frame
@@ -350,7 +349,7 @@ class FactoryEnvResidual(DirectRLEnv):
             rot_actions_quat,
             torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
         )
-        ctrl_target_fingertip_midpoint_quat = torch_utils.quat_mul(rot_actions_quat, self.fingertip_midpoint_quat)
+        ctrl_target_fingertip_midpoint_quat = torch_utils.quat_mul(rot_actions_quat, self.base_actions[:, 3:7])
 
         target_euler_xyz = torch.stack(torch_utils.get_euler_xyz(ctrl_target_fingertip_midpoint_quat), dim=1)
         target_euler_xyz[:, 0] = 3.14159  # Restrict actions to be upright.
@@ -360,9 +359,9 @@ class FactoryEnvResidual(DirectRLEnv):
             roll=target_euler_xyz[:, 0], pitch=target_euler_xyz[:, 1], yaw=target_euler_xyz[:, 2]
         )
 
-        ngripper = torch.clamp(self.gripper / 1.6 + self.actions[:, 6:7], 0.0, 1.0)
-        gripper_pos = 1.6 * ngripper
-        ctrl_target_gripper_dof_pos = gripper_pos  # (num_envs, 1)
+        ngripper = torch.clamp(self.base_actions[:, 7:8] + self.actions[:, 6:7], 0.0, 1.0)
+        gripper = 1.6 * ngripper
+        ctrl_target_gripper_dof_pos = gripper  # (num_envs, 1)
 
         self.generate_ctrl_signals(
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,

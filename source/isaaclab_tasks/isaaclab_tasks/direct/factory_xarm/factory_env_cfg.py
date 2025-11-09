@@ -151,6 +151,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     residual_obs_order: list = [
         "fingertip_pos",
         "fingertip_quat", 
+        "gripper",
         "fingertip_pos_rel_fixed", 
         "fingertip_pos_rel_held", 
         "ee_linvel", 
@@ -161,6 +162,31 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     residual_state_order: list = [
         "fingertip_pos",
         "fingertip_quat",
+        "gripper",
+        "ee_linvel",
+        "ee_angvel",
+        "joint_pos",
+        "held_pos",
+        "held_pos_rel_fixed",
+        "held_quat",
+        "fixed_pos",
+        "fixed_quat",
+        "base_actions"
+    ]
+
+    residual_obs_order_no_base: list = [
+        "fingertip_pos",
+        "fingertip_quat", 
+        "gripper",
+        "fingertip_pos_rel_fixed", 
+        "fingertip_pos_rel_held", 
+        "ee_linvel", 
+        "ee_angvel", 
+    ]
+    residual_state_order_no_base: list = [
+        "fingertip_pos",
+        "fingertip_quat",
+        "gripper",
         "ee_linvel",
         "ee_angvel",
         "joint_pos",
@@ -204,7 +230,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     
     measure_force = False
     enable_cameras = False
-    visualize_markers = False
+    visualize_markers = True
 
     XARM_USD_PATH = "source/isaaclab_tasks/isaaclab_tasks/direct/factory_xarm/assets/xarm7_gripper.usd"
     robot: ArticulationCfg = ArticulationCfg(
