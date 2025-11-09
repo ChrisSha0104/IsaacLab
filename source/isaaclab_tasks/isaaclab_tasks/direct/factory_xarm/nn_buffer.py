@@ -72,7 +72,7 @@ class NearestNeighborBuffer:
         act_gr  = self._act_grip.to(device)           # (E,T,1)
 
         # Select per-env episodes
-        obs_e = obs_pos[episode_idxs]                 # (N,T,3)
+        obs_e = obs_pos[episode_idxs]                 # (N,T,3) # TODO: add noise?
         m_e   = mask[episode_idxs]                    # (N,T)
         ap_e  = act_pos[episode_idxs]
         aq_e  = act_qua[episode_idxs]
@@ -88,4 +88,10 @@ class NearestNeighborBuffer:
         a_pos = ap_e.gather(1, t.expand(N, 1, 3)).squeeze(1)          # (N,3)
         a_qua = aq_e.gather(1, t.expand(N, 1, 4)).squeeze(1)          # (N,4)
         a_grp = ag_e.gather(1, t.expand(N, 1, 1)).squeeze(1)          # (N,1)
+
+        # check nan in output
+        if torch.isnan(a_pos).any() or torch.isnan(a_qua).any() or torch.isnan(a_grp).any():
+            print("idx:", idx)
+            import pdb; pdb.set_trace()
+
         return torch.cat([a_pos, a_qua, a_grp], dim=-1)               # (N,8)

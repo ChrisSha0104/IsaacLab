@@ -100,7 +100,7 @@ class CtrlCfg:
     pos_action_bounds = [0.05, 0.05, 0.05]
     rot_action_bounds = [1.0, 1.0, 1.0]
 
-    pos_action_threshold = [0.02, 0.02, 0.02]
+    pos_action_threshold = [0.05, 0.05, 0.05]
     rot_action_threshold = [0.097, 0.097, 0.097]
 
     reset_joints = [0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0]
@@ -202,9 +202,9 @@ class FactoryEnvCfg(DirectRLEnvCfg):
 
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=128, env_spacing=2.0, clone_in_fabric=False)
     
-    measure_force = True
+    measure_force = False
     enable_cameras = False
-    visualize_markers = True
+    visualize_markers = False
 
     XARM_USD_PATH = "source/isaaclab_tasks/isaaclab_tasks/direct/factory_xarm/assets/xarm7_gripper.usd"
     robot: ArticulationCfg = ArticulationCfg(

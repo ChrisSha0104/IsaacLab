@@ -181,6 +181,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     robot_states_path: str = "logs/data/teleop_gear_mesh_9/robot_states/robot_trajectories.npz"
     robot_data = np.load(robot_states_path, allow_pickle=True)
 
+    init_robot_qpos_path = "logs/data/teleop_gear_mesh_9/robot_states/init_qpos_sim.npy"
+    init_robot_qpos_data = np.load(init_robot_qpos_path, allow_pickle=True)
+
     max_ts = -1
     for i, ep in enumerate(eps_idx):
         eps_idx_key = f"episode_{eps_idx[i]:04d}"
@@ -193,7 +196,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     real_eef_pos_targets = torch.zeros((max_ts, len(eps_idx), 3)).to(env.device)
     real_quat_targets = torch.zeros((max_ts, len(eps_idx), 4)).to(env.device)
     real_gripper_targets = torch.zeros((max_ts, len(eps_idx), 1)).to(env.device)
-    real_init_qpos = torch.zeros((len(eps_idx), 7)).to(env.device)
 
     for i, ep in enumerate(eps_idx):
         eps_idx_key = f"episode_{eps_idx[i]:04d}"
@@ -231,10 +233,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         else:
             valid_mask[:, i] = True
 
-        real_init_qpos[i] = torch.from_numpy(robot_data[f"{eps_idx_key}/obs.qpos"][0]).to(env.device)
+    import pdb; pdb.set_trace()
+
+    real_init_qpos = torch.from_numpy(init_robot_qpos_data).to(env.device)
+    # print("real init qpos:", real_init_qpos.shape, real_init_qpos)
 
     # if save initial states
-    if True:
+    if False:
         out_path = "logs/data/teleop_gear_mesh_9/initial_poses"
         os.makedirs(out_path, exist_ok=True)
         init_poses = {
@@ -246,7 +251,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         }
         torch.save(init_poses, os.path.join(out_path, "initial_poses.pt"))
         print(f"[INFO] Saved initial poses to: {os.path.join(out_path, 'initial_poses.pt')}")
-        exit(0)
 
     T = max_ts
     # reset environment
