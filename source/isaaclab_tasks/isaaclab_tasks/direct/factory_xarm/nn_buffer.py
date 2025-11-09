@@ -51,6 +51,14 @@ class NearestNeighborBuffer:
         self._max_episode_length = T
         print(f"Loaded {len(episodes)} episodes; max length {T}.")
 
+    def get_total_episodes(self):
+        """Return total number of episodes in the buffer."""
+        return self._total_episodes
+    
+    def get_max_episode_length(self):
+        """Return maximum episode length in the buffer."""
+        return self._max_episode_length
+
     def _nn_indices(self, eidx, pos, quat=None, grip=None, verbose=False):
         """Find nearest neighbor timestep per env using position (+quat/+grip)."""
         dev = pos.device
