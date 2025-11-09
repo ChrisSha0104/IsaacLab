@@ -1,1 +1,2 @@
-CUDA_VISIBLE_DEVICES=1 python scripts/reinforcement_learning/rl_games/replay.py --task Isaac-Factory-Xarm-Plain --headless --checkpoint logs/rl_games/FactoryXarm/test_peg_insert-SHAKY/nn/FactoryXarm.pth
+python scripts/reinforcement_learning/rl_games/replay_gear_mesh.py \
+    --task Isaac-Factory-Xarm-GearMesh-Replay --enable_cameras --headless

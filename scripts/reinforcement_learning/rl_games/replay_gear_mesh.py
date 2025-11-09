@@ -9,6 +9,7 @@
 
 import argparse
 import sys
+import cv2
 
 from isaaclab.app import AppLauncher
 
@@ -19,23 +20,12 @@ parser.add_argument("--video_length", type=int, default=200, help="Length of the
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
-parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
+parser.add_argument("--num_envs", type=int, default=9, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rl_games_cfg_entry_point", help="Name of the RL agent configuration entry point."
 )
-parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
-parser.add_argument(
-    "--use_pretrained_checkpoint",
-    action="store_true",
-    help="Use the pre-trained checkpoint from Nucleus.",
-)
-parser.add_argument(
-    "--use_last_checkpoint",
-    action="store_true",
-    help="When no checkpoint provided, use the last saved model. Otherwise use the best saved model.",
-)
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -53,7 +43,6 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-
 import gymnasium as gym
 import math
 import os
@@ -61,6 +50,9 @@ import random
 import time
 import torch
 import numpy as np
+
+np.set_printoptions(precision=3, suppress=True)
+torch.set_printoptions(precision=3, sci_mode=False)
 
 from rl_games.common import env_configurations, vecenv
 from rl_games.common.player import BasePlayer
@@ -94,6 +86,22 @@ def load_npz_dict(path):
         else {k: data[k].item() for k in data.files}
     )
 
+def quat_geodesic_angle(q1: torch.Tensor, q2: torch.Tensor, eps: float = 1e-8):
+    """
+    q1, q2: (..., 4) float tensors in [w, x, y, z] or [x, y, z, w]—either is fine
+            as long as both use the same convention.
+    Returns: (...,) radians in [0, pi]
+    """
+    # normalize
+    q1 = q1 / (q1.norm(dim=-1, keepdim=True).clamp_min(eps))
+    q2 = q2 / (q2.norm(dim=-1, keepdim=True).clamp_min(eps))
+
+    # dot, handle sign ambiguity
+    dot = torch.sum(q1 * q2, dim=-1).abs().clamp(-1 + eps, 1 - eps)
+
+    return 2.0 * torch.arccos(dot)
+
+
 
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: dict):
@@ -114,34 +122,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set the environment seed (after multi-gpu config for updated rank from agent seed)
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg["params"]["seed"]
-
-    # # specify directory for logging experiments
-    # log_root_path = os.path.join("logs", "rl_games", agent_cfg["params"]["config"]["name"])
-    # log_root_path = os.path.abspath(log_root_path)
-    # print(f"[INFO] Loading experiment from directory: {log_root_path}")
-    # # find checkpoint
-    # if args_cli.use_pretrained_checkpoint:
-    #     resume_path = get_published_pretrained_checkpoint("rl_games", train_task_name)
-    #     if not resume_path:
-    #         print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
-    #         return
-    # elif args_cli.checkpoint is None:
-    #     # specify directory for logging runs
-    #     run_dir = agent_cfg["params"]["config"].get("full_experiment_name", ".*")
-    #     # specify name of checkpoint
-    #     if args_cli.use_last_checkpoint:
-    #         checkpoint_file = ".*"
-    #     else:
-    #         # this loads the best checkpoint
-    #         checkpoint_file = f"{agent_cfg['params']['config']['name']}.pth"
-    #     # get path to previous checkpoint
-    #     resume_path = get_checkpoint_path(log_root_path, run_dir, checkpoint_file, other_dirs=["nn"])
-    # else:
-    #     resume_path = retrieve_file_path(args_cli.checkpoint)
-    # log_dir = os.path.dirname(os.path.dirname(resume_path))
-
-    # # set the log directory for the environment (works for all environment types)
-    # env_cfg.log_dir = log_dir
 
     # wrap around environment for rl-games
     rl_device = agent_cfg["params"]["config"]["device"]
@@ -184,49 +164,102 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # create runner from rl-games
     runner = Runner()
     runner.load(agent_cfg)
-    # # obtain the agent from the runner
-    # agent: BasePlayer = runner.create_player()
-    # agent.restore(resume_path)
-    # agent.reset()
 
     dt = env.unwrapped.step_dt
 
     # load traj & object data
-    eps_idx_key = "episode_0001"
-
-    # load obj states
+    eps_idx = [0,1,2,3,4,5,6,7,8]
+    assert env.unwrapped.num_envs == len(eps_idx), "Number of envs must match number of trajs to replay."
     obj_states_path: str = "logs/data/teleop_gear_mesh_9/obj_states/object_states.npz"
     obj_data = np.load(obj_states_path, allow_pickle=True)
-    gear2base_mat = obj_data[f"{eps_idx_key}"][0]
-    gear2base_pos = gear2base_mat[:3, 3] + np.array([-0.02025, 0.0, 0.0])
-    gear2base_pos[2] = -0.0175
-    print("gear2base_pos:", gear2base_pos)
-    gear2base_quat = np.array([1.0, 0.0, 0.0, 0.0])
-    gearbase2base_mat = obj_data[f"episode_0006"][1]
-    gearbase2base_pos = gearbase2base_mat[:3, 3]
-    gearbase2base_quat = np.array([1.0, 0.0, 0.0, 0.0])
 
-    # load trajectories
-    data_path: str = "logs/data/teleop_gear_mesh_9/robot_states/robot_trajectories.npz"
-    data = np.load(data_path, allow_pickle=True)
+    gear2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
+    gear2base_quat = torch.zeros((len(eps_idx), 4)).to(env.device)
+    gearbase2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
+    gearbase2base_quat = torch.zeros((len(eps_idx), 4)).to(env.device)
 
-    pos = torch.from_numpy(data[f"{eps_idx_key}/obs.eef_pos"]).to(env.device)
-    quat = torch.from_numpy(data[f"{eps_idx_key}/obs.eef_quat"]).to(env.device)
-    gripper = torch.from_numpy(data[f"{eps_idx_key}/obs.gripper"]).to(env.device)
-    qpos = data[f"{eps_idx_key}/obs.qpos"]
+    robot_states_path: str = "logs/data/teleop_gear_mesh_9/robot_states/robot_trajectories.npz"
+    robot_data = np.load(robot_states_path, allow_pickle=True)
 
-    T = pos.shape[0]
+    max_ts = -1
+    for i, ep in enumerate(eps_idx):
+        eps_idx_key = f"episode_{eps_idx[i]:04d}"
+        max_ts = max(max_ts, robot_data[f"{eps_idx_key}/obs.eef_pos"].shape[0])
+
+    # --- padding bookkeeping ---
+    # valid_mask: (max_ts, num_envs) bool tensor, True for valid timesteps, False for padded timesteps
+    valid_mask = torch.zeros((max_ts, len(eps_idx)), dtype=torch.bool).to(env.device)
+
+    real_eef_pos_targets = torch.zeros((max_ts, len(eps_idx), 3)).to(env.device)
+    real_quat_targets = torch.zeros((max_ts, len(eps_idx), 4)).to(env.device)
+    real_gripper_targets = torch.zeros((max_ts, len(eps_idx), 1)).to(env.device)
+    real_init_qpos = torch.zeros((len(eps_idx), 7)).to(env.device)
+
+    for i, ep in enumerate(eps_idx):
+        eps_idx_key = f"episode_{eps_idx[i]:04d}"
+        gear2base_mat = torch.from_numpy(obj_data[f"{eps_idx_key}"][0]).to(env.device).reshape(4,4)
+        gear2base_pos[i] = gear2base_mat[:3, 3] + torch.tensor([-0.02025, 0.0, 0.0]).to(env.device)
+        gear2base_pos[i][2] = -0.0175
+        gear2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
+        # NOTE: need formal sys id
+        gearbase2base_pos[i] = torch.tensor([0.33, 0.0, 0.0]).to(env.device)
+        gearbase2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
+
+        # --- simple padding: repeat the last valid frame ---
+        pos_np   = robot_data[f"{eps_idx_key}/action.eef_pos"]
+        quat_np  = robot_data[f"{eps_idx_key}/action.eef_quat"]
+        grip_np  = robot_data[f"{eps_idx_key}/action.gripper"]
+        L = pos_np.shape[0]
+
+        pos_t  = torch.from_numpy(pos_np).to(env.device)
+        quat_t = torch.from_numpy(quat_np).to(env.device)
+        grip_t = torch.from_numpy(grip_np).to(env.device)
+
+        real_eef_pos_targets[:L, i] = pos_t
+        real_quat_targets[:L, i] = quat_t
+        real_gripper_targets[:L, i] = grip_t
+
+        # pad remaining timesteps by repeating the last frame
+        if L < max_ts:
+            valid_mask[:L, i] = True
+            last_pos = pos_t[-1].expand(max_ts - L, -1)
+            last_quat = quat_t[-1].expand(max_ts - L, -1)
+            last_grip = grip_t[-1].expand(max_ts - L, -1)
+            real_eef_pos_targets[L:, i] = last_pos
+            real_quat_targets[L:, i] = last_quat
+            real_gripper_targets[L:, i] = last_grip
+        else:
+            valid_mask[:, i] = True
+
+        real_init_qpos[i] = torch.from_numpy(robot_data[f"{eps_idx_key}/obs.qpos"][0]).to(env.device)
+
+    # if save initial states
+    if True:
+        out_path = "logs/data/teleop_gear_mesh_9/initial_poses"
+        os.makedirs(out_path, exist_ok=True)
+        init_poses = {
+            "robot": real_init_qpos, # (num_eps, 7)
+            "gear_pos": gear2base_pos, # (num_eps, 3)
+            "gear_quat": gear2base_quat, # (num_eps, 4)
+            "base_pos": gearbase2base_pos, # (num_eps, 3)
+            "base_quat": gearbase2base_quat, # (num_eps, 4)
+        }
+        torch.save(init_poses, os.path.join(out_path, "initial_poses.pt"))
+        print(f"[INFO] Saved initial poses to: {os.path.join(out_path, 'initial_poses.pt')}")
+        exit(0)
+
+    T = max_ts
     # reset environment
     obs = env.reset()
 
     # set to initial pose
-    env.unwrapped._set_franka_to_default_pose([qpos[0].tolist()], env_ids=torch.tensor([0], device=env.device))
+    env.unwrapped._set_replay_default_pose(real_init_qpos, env_ids=torch.arange(len(eps_idx), device=env.device))
     env.unwrapped._set_gear_mesh_state(
-        gear_pos=torch.from_numpy(gear2base_pos).to(env.device).unsqueeze(0), 
-        gear_quat=torch.from_numpy(gear2base_quat).to(env.device).unsqueeze(0), 
-        base_pos=torch.from_numpy(gearbase2base_pos).to(env.device).unsqueeze(0), 
-        base_quat=torch.from_numpy(gearbase2base_quat).to(env.device).unsqueeze(0),
-        env_ids=torch.tensor([0], device=env.device)
+        gear_pos=gear2base_pos, 
+        gear_quat=gear2base_quat, 
+        base_pos=gearbase2base_pos, 
+        base_quat=gearbase2base_quat,
+        env_ids=torch.arange(len(eps_idx), device=env.device)
     )
     obs = env.unwrapped._get_observations()
     obs = obs["policy"]
@@ -234,11 +267,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     obs_eef_pos = []
     obs_eef_quat = []
     obs_gripper = []
-    obs_qpos = []
 
     act_eef_pos = []
     act_eef_quat = []
     act_gripper = []
+
+    for i in range(len(eps_idx)):
+        out_path = f"logs/replay/episode_{eps_idx[i]:04d}"
+        os.makedirs(out_path, exist_ok=True)
+        cam_path = os.path.join(out_path, "camera_1", "rgb")
+        os.makedirs(cam_path, exist_ok=True)
 
     timestep = 0
     # simulate environment
@@ -249,30 +287,44 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         # run everything in inference mode
         with torch.inference_mode():
-            # convert obs to agent format
-            eef_real_pos = pos[timestep].unsqueeze(0)
-            eef_quat = quat[timestep].unsqueeze(0)
-            gripper_pos = gripper[timestep].unsqueeze(0)
+            eef_real_pos = real_eef_pos_targets[timestep]
+            eef_quat = real_quat_targets[timestep]
+            gripper_pos = real_gripper_targets[timestep]
             eef_sim_pos = torch_utils.tf_combine(
                 eef_quat,
                 eef_real_pos,
-                torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device),
-                torch.tensor([[0.0, 0.0, 0.235]], device=env.device),
+                torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device).repeat(len(eps_idx),1),
+                torch.tensor([[0.0, 0.0, 0.225]], device=env.device).repeat(len(eps_idx),1)
             )[1]
             actions = torch.cat([eef_sim_pos, eef_quat, gripper_pos], dim=-1)
 
-            obs_eef_pos.append(obs[0,:3].cpu().numpy())
-            obs_eef_quat.append(obs[0,3:7].cpu().numpy())
-            obs_qpos.append(obs[0,7:].cpu().numpy())
+            obs_eef_pos.append(obs[:,:3].cpu().numpy())
+            obs_eef_quat.append(obs[:,3:7].cpu().numpy())
 
-            act_eef_pos.append(actions[0,:3].cpu().numpy())
-            act_eef_quat.append(actions[0,3:7].cpu().numpy())
+            act_eef_pos.append(actions[:,:3].cpu().numpy())
+            act_eef_quat.append(actions[:,3:7].cpu().numpy())
 
-            print("------------ Step Info -----------")
-            print("Currently at timestep:", timestep, "/", T)
-            print("curr task space pose:", obs[:,:7].cpu().numpy())
-            print("goal task space pose:", actions.cpu().numpy())
-            print("---------------------------------")
+            for i in range(len(eps_idx)):
+                if not valid_mask[timestep, i]:
+                    continue  # skip padded timesteps
+                cam_path = f"logs/replay/episode_{i:04d}/camera_1/rgb"
+                img = env.unwrapped.front_rgb[i].cpu().numpy()
+                img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(os.path.join(cam_path, f"{timestep:06d}.jpg"), img_bgr)
+
+            if len(eps_idx) == 1:
+                print("------------ Step Info (single env) -----------")
+                print("Currently at timestep:", timestep, "/", T)
+                print("curr task space pose:", obs[:,:7].cpu().numpy())
+                print("goal task space pose:", actions.cpu().numpy())
+                print("---------------------------------")
+            else:
+                print("------------ Step Info (multi env) -----------")
+                print("Currently at timestep:", timestep, "/", T)
+                print("pos err:", torch.norm(obs[:,:3]-actions[:,:3], dim=-1).cpu().numpy())
+                print("rot err:", quat_geodesic_angle(obs[:,3:7], actions[:,3:7]).cpu().numpy())
+                # print("grip err:", torch.abs(obs[:,7:8]-actions[:,7:8]).cpu().numpy())
+                print("---------------------------------")
 
             # env stepping
             obs, _, dones, _ = env.step(actions)
@@ -295,17 +347,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # close the simulator
     env.close()
 
-    out_data = {
-        f"{eps_idx_key}/obs.eef_pos": np.array(obs_eef_pos),
-        f"{eps_idx_key}/obs.eef_quat": np.array(obs_eef_quat),
-        f"{eps_idx_key}/obs.qpos": np.array(obs_qpos),
-        f"{eps_idx_key}/action.eef_pos": np.array(act_eef_pos),
-        f"{eps_idx_key}/action.eef_quat": np.array(act_eef_quat),
-    }
+    arr_obs_pos  = np.array(obs_eef_pos)        # (T, N, 3)
+    arr_obs_quat = np.array(obs_eef_quat)       # (T, N, 4)
+    arr_act_pos  = np.array(act_eef_pos)        # (T, N, 3)
+    arr_act_quat = np.array(act_eef_quat)       # (T, N, 4)
 
-    out_path = "logs/data/sim_trajs.npz"
-    np.savez_compressed(out_path, **out_data)
-    print(f"[INFO] Saved simulated trajectories to: {out_path}")
+    out_data = {}
+    for i, ep in enumerate(eps_idx):
+        k = f"episode_{ep:04d}"
+        out_data[f"{k}/obs.eef_pos"]    = arr_obs_pos[:,  i, :]
+        out_data[f"{k}/obs.eef_quat"]   = arr_obs_quat[:, i, :]
+        out_data[f"{k}/action.eef_pos"] = arr_act_pos[:,  i, :]
+        out_data[f"{k}/action.eef_quat"]= arr_act_quat[:, i, :]
+
+    robot_path = os.path.join(out_path, "robot_data")
+    os.makedirs(robot_path, exist_ok=True)
+    np.savez_compressed(os.path.join(robot_path, "sim_trajs.npz"), **out_data)
+    print(f"[INFO] Saved simulated trajectories to: {os.path.join(robot_path,'sim_trajs.npz')}")
 
 
 if __name__ == "__main__":

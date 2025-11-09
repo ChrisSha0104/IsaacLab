@@ -2,31 +2,40 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+import json
+import numpy as np
+import torch
+import os
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg
+from isaaclab.sensors import ContactSensorCfg, TiledCameraCfg
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR, ISAAC_NUCLEUS_DIR
+from isaaclab.utils.math import quat_from_matrix
+from isaaclab.markers import VisualizationMarkersCfg
 
 from .factory_tasks_cfg import ASSET_DIR, FactoryTask, GearMesh, NutThread, PegInsert
 
 OBS_DIM_CFG = {
     "fingertip_pos": 3,
     "fingertip_pos_rel_fixed": 3,
+    "fingertip_pos_rel_held": 3,
     "fingertip_quat": 4,
     "ee_linvel": 3,
     "ee_angvel": 3,
+    "base_actions": 8,
 }
 
 STATE_DIM_CFG = {
     "fingertip_pos": 3,
     "fingertip_pos_rel_fixed": 3,
+    "fingertip_pos_rel_held": 3,
     "fingertip_quat": 4,
     "ee_linvel": 3,
     "ee_angvel": 3,
@@ -40,13 +49,49 @@ STATE_DIM_CFG = {
     "ema_factor": 1,
     "pos_threshold": 3,
     "rot_threshold": 3,
+    "base_actions": 8,
 }
 
+intr_path = "logs/data/calibration/251029_rrl_2cams/intrinsics.json"
+with open(intr_path, "r") as f:
+    intr = json.load(f)
+
+extr_path = "logs/data/calibration/251029_rrl_2cams/extrinsics.json"
+with open(extr_path, "r") as f:
+    extr = json.load(f)
+
+H, W = intr["front"]["height"], intr["front"]["width"]
+
+FRONT_INTR = [
+    intr["front"]["fx"], 0.0, intr["front"]["ppx"],
+    0.0, intr["front"]["fy"], intr["front"]["ppy"],
+    0.0, 0.0, 1.0
+]
+
+FRONT_PINHOLE_CFG = sim_utils.PinholeCameraCfg.from_intrinsic_matrix(
+    intrinsic_matrix=FRONT_INTR,
+    height=H,
+    width=W,
+)
+
+front_dx = FRONT_PINHOLE_CFG.horizontal_aperture_offset 
+front_dy = FRONT_PINHOLE_CFG.vertical_aperture_offset
+
+front_offset_cam = np.eye(4)
+front_offset_cam[0, 3] = -front_dx   # shift right (+X)
+front_offset_cam[1, 3] = -front_dy   # shift up    (+Y)
+
+front2base = np.array(extr["cam2base"]["front2base"]).reshape(4, 4)
+front2base = front2base @ front_offset_cam  # apply offset to front2base
+
+R_front2base = front2base[:3, :3]
+q_front2base = quat_from_matrix(torch.from_numpy(R_front2base)).tolist() # wxyz
+t_front2base = front2base[:3, 3].tolist()
 
 @configclass
 class ObsRandCfg:
     fixed_asset_pos = [0.001, 0.001, 0.001]
-
+    held_asset_pos = [0.001, 0.001, 0.001]
 
 @configclass
 class CtrlCfg:
@@ -80,7 +125,8 @@ class CtrlCfg:
 @configclass
 class FactoryEnvCfg(DirectRLEnvCfg):
     decimation = 8
-    action_space = 6
+    action_space = 6 # TODO: 7 for residual
+    residual_action_space = 7
     # num_*: will be overwritten to correspond to obs_order, state_order.
     observation_space = 21
     state_space = 72
@@ -98,7 +144,33 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         "fixed_quat",
     ]
 
-    obs_order_no_task: list = ["fingertip_pos", "fingertip_quat", "joint_pos"]
+    # for replay
+    obs_order_no_task: list = ["fingertip_pos", "fingertip_quat"]
+
+    # for residual policies
+    residual_obs_order: list = [
+        "fingertip_pos",
+        "fingertip_quat", 
+        "fingertip_pos_rel_fixed", 
+        "fingertip_pos_rel_held", 
+        "ee_linvel", 
+        "ee_angvel", 
+        "base_actions"
+    ]
+
+    residual_state_order: list = [
+        "fingertip_pos",
+        "fingertip_quat",
+        "ee_linvel",
+        "ee_angvel",
+        "joint_pos",
+        "held_pos",
+        "held_pos_rel_fixed",
+        "held_quat",
+        "fixed_pos",
+        "fixed_quat",
+        "base_actions"
+    ]
 
     task_name: str = "peg_insert"  # peg_insert, gear_mesh, nut_thread
     task: FactoryTask = FactoryTask()
@@ -128,9 +200,12 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         ),
     )
 
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=128, env_spacing=2.0, clone_in_fabric=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=128, env_spacing=2.0, clone_in_fabric=False)
     
     measure_force = True
+    enable_cameras = False
+    visualize_markers = True
+
     XARM_USD_PATH = "source/isaaclab_tasks/isaaclab_tasks/direct/factory_xarm/assets/xarm7_gripper.usd"
     robot: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/robot",
@@ -189,7 +264,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
                 joint_names_expr=["gripper"], 
                 # effort_limit=5.0,
                 # velocity_limit=0.04,
-                stiffness=20.0, # 200
+                stiffness=5.0, # 200
                 damping=0.0, # 20
             ),
         },
@@ -203,6 +278,49 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         history_length=6,
         debug_vis=False,
         # filter_prim_paths_expr=["{ENV_REGEX_NS}/Cube"],
+    )
+
+    front_camera_cfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/front_camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=t_front2base, rot=q_front2base, convention="ros"), # z-down; x-forward # greater angle = towards gripper
+        height=H,
+        width=W,
+        data_types=[
+            "rgb",
+            # "distance_to_image_plane",
+            ],
+        spawn=FRONT_PINHOLE_CFG,
+    )
+
+    frame_marker_cfg = VisualizationMarkersCfg(
+        prim_path="/Visuals/myMarkers",
+        markers={
+            "frame": sim_utils.UsdFileCfg(
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
+                scale=(0.07, 0.07, 0.07))
+            }
+        )
+    
+    keypoints_marker_cfg = VisualizationMarkersCfg(
+        prim_path="/Visuals/myMarkers",
+        markers={
+            "sphere": sim_utils.SphereCfg(
+                radius=0.006,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+            ),
+            "sphere": sim_utils.SphereCfg(
+                radius=0.006,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+            ),
+            "sphere": sim_utils.SphereCfg(
+                radius=0.006,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+            ),
+            "sphere": sim_utils.SphereCfg(
+                radius=0.006,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+            ),
+        }
     )
 
 @configclass

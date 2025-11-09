@@ -245,8 +245,8 @@ def compute_dof_state_admittance(
     dt, device,
     xdot_ref,                    # (B,6) controller internal state (pass in/out)
     F_ext=None,                  # (B,6), default zeros
-    Kx=1000.0, Dx=None, mx=0.1,
-    Kr=4.0,  Dr=None, mr=0.01,
+    Kx=200.0, Dx=None, mx=0.1,
+    Kr=50.0,  Dr=None, mr=0.01,
     lam=1e-2,
     rot_scale=0.25,
     v_task_limits=(0.25, 0.6),    # (lin m/s, ang rad/s) # TODO: debug if needed?

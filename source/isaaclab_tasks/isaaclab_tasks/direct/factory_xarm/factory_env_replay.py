@@ -100,8 +100,6 @@ class FactoryEnvReplay(DirectRLEnv):
             "/World/envs/env_.*/Table", cfg, translation=(0.55, 0.0, 0.0), orientation=(0.70711, 0.0, 0.0, 0.70711)
         )
 
-        self.measure_force = self.cfg.measure_force
-
         self._robot = Articulation(self.cfg.robot)
         self._fixed_asset = Articulation(self.cfg_task.fixed_asset)
         self._held_asset = Articulation(self.cfg_task.held_asset)
@@ -109,9 +107,16 @@ class FactoryEnvReplay(DirectRLEnv):
             self._small_gear_asset = Articulation(self.cfg_task.small_gear_cfg)
             self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg)
 
+        self.measure_force = self.cfg.measure_force
+        self.enable_cameras = self.cfg.enable_cameras
+
         if self.measure_force:
             self.eef_contact_sensor = ContactSensor(self.cfg.eef_contact_sensor_cfg)
             self.scene.sensors["eef_contact_sensor"] = self.eef_contact_sensor
+
+        if self.enable_cameras:
+            self.front_camera = TiledCamera(self.cfg.front_camera_cfg)
+            self.scene.sensors["front_camera"] = self.front_camera
 
         self.scene.clone_environments(copy_from_source=False)
         if self.device == "cpu":
@@ -155,6 +160,9 @@ class FactoryEnvReplay(DirectRLEnv):
             self.eef_force = self.eef_contact_sensor.data.net_forces_w.squeeze(1) # (num_envs, 3)
             self.F_ext = torch.cat([self.eef_force, torch.zeros((self.num_envs, 3), device=self.device)], dim=-1) # (num_envs, 6)
 
+        if self.enable_cameras:
+            self.front_rgb = self.front_camera.data.output["rgb"] # (num_envs, H, W, 3) (0-255)
+
         self.joint_pos = self._robot.data.joint_pos.clone()
         self.joint_vel = self._robot.data.joint_vel.clone()
 
@@ -190,6 +198,7 @@ class FactoryEnvReplay(DirectRLEnv):
             "ee_linvel": self.ee_linvel_fd,
             "ee_angvel": self.ee_angvel_fd,
             "joint_pos": self.joint_pos[:, 0:7],
+            # "rgb": self.front_rgb,
             "prev_actions": prev_actions,
         }
 
@@ -235,7 +244,7 @@ class FactoryEnvReplay(DirectRLEnv):
         # self.actions = self.ema_factor * action.clone().to(self.device) + (1 - self.ema_factor) * self.actions
         self.goal_fingertip_pos = action[:, 0:3]
         self.goal_fingertip_quat = action[:, 3:7]
-        self.goal_gripper_pos = action[:, 7] * 2.0
+        self.goal_gripper_pos = action[:, -1:] * 2.0
 
     def _apply_action(self):
         """Apply actions for policy as delta targets from current position."""
@@ -292,7 +301,7 @@ class FactoryEnvReplay(DirectRLEnv):
         self, 
         ctrl_target_fingertip_midpoint_pos, 
         ctrl_target_fingertip_midpoint_quat,
-        ctrl_target_gripper_dof_pos=0.0, # default open
+        ctrl_target_gripper_dof_pos, # (num_envs, 1)
         ):
         self.arm_joint_pose_target, self.joint_vel_target, x_acc, _, self.eef_vel = factory_control.compute_dof_state_admittance(
             cfg=self.cfg,
@@ -307,12 +316,12 @@ class FactoryEnvReplay(DirectRLEnv):
             ctrl_target_eef_quat=ctrl_target_fingertip_midpoint_quat,
             xdot_ref=self.eef_vel,
             dt=self.physics_dt,
-            F_ext=None, #self.F_ext if self.measure_force else None,
+            F_ext=self.F_ext if self.measure_force else None,
             device=self.device,
         )
 
         self._robot.set_joint_position_target(self.arm_joint_pose_target, joint_ids=self.arm_dof_idx)
-        self._robot.set_joint_position_target(torch.tensor([[ctrl_target_gripper_dof_pos]], device=self.device).repeat(self.num_envs,1), joint_ids=self.gripper_dof_idx)
+        self._robot.set_joint_position_target(ctrl_target_gripper_dof_pos, joint_ids=self.gripper_dof_idx)
         # self._robot.set_joint_velocity_target(self.joint_vel_target)
 
     def _get_dones(self):
@@ -338,6 +347,9 @@ class FactoryEnvReplay(DirectRLEnv):
 
         self.task_prop_gains = self.default_gains
         self.task_deriv_gains = factory_utils.get_deriv_gains(self.default_gains)
+
+        if self.enable_cameras:
+            self.front_camera.reset(env_ids=env_ids)
 
         self._set_franka_to_default_pose(joints=self.cfg.ctrl.reset_joints, env_ids=env_ids)
         self.step_sim_no_action()
@@ -390,6 +402,23 @@ class FactoryEnvReplay(DirectRLEnv):
         joint_pos[:, 8:] = gripper_pos / 2.0 
         joint_pos[:, 7] = gripper_pos
         joint_pos[:, :7] = torch.tensor(joints, device=self.device)[None, :]
+        joint_vel = torch.zeros_like(joint_pos)
+        joint_effort = torch.zeros_like(joint_pos)
+        self.ctrl_target_joint_pos[env_ids, :] = joint_pos
+        self._robot.set_joint_position_target(self.ctrl_target_joint_pos[env_ids], env_ids=env_ids)
+        self._robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
+        self._robot.reset()
+        self._robot.set_joint_effort_target(joint_effort, env_ids=env_ids)
+
+        self.step_sim_no_action()
+
+    def _set_replay_default_pose(self, joints, env_ids):
+        """Set xarm to various given joint position."""
+        joint_pos = self._robot.data.default_joint_pos[env_ids]
+        gripper_pos = 0.0
+        joint_pos[:, 8:] = gripper_pos / 2.0
+        joint_pos[:, 7] = gripper_pos
+        joint_pos[:, :7] = joints
         joint_vel = torch.zeros_like(joint_pos)
         joint_effort = torch.zeros_like(joint_pos)
         self.ctrl_target_joint_pos[env_ids, :] = joint_pos

@@ -202,6 +202,9 @@ class MediumGear(HeldAssetCfg):
 
 @configclass
 class GearMesh(FactoryTask):
+    initial_poses_path: str = "logs/data/teleop_gear_mesh_9/initial_poses/initial_poses.pt" # NOTE: get this from replay (also validate)
+    action_data_path: str = "logs/data/teleop_gear_mesh_9/robot_states/robot_trajectories.npz" # NOTE: get this from teleop
+
     name = "gear_mesh"
     fixed_asset_cfg = GearBase()
     held_asset_cfg = MediumGear()
