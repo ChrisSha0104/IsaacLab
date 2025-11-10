@@ -300,8 +300,8 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
         """Get actor/critic inputs using asymmetric critic."""
         obs_dict, state_dict = self._get_factory_obs_state_dict()
 
-        obs_tensors = factory_utils.collapse_obs_dict(obs_dict, self.cfg.residual_obs_order + ["prev_actions"])
-        state_tensors = factory_utils.collapse_obs_dict(state_dict, self.cfg.residual_state_order + ["prev_actions"])
+        obs_tensors = factory_utils.collapse_obs_dict(obs_dict, self.cfg.residual_obs_order_no_base + ["prev_actions"])
+        state_tensors = factory_utils.collapse_obs_dict(state_dict, self.cfg.residual_state_order_no_base + ["prev_actions"])
 
         if obs_tensors.isnan().any() or state_tensors.isnan().any():
             import pdb; pdb.set_trace()
