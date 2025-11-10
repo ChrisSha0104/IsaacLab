@@ -5,6 +5,7 @@
 
 import numpy as np
 import torch
+import math
 
 import carb
 import isaacsim.core.utils.torch as torch_utils
@@ -16,6 +17,7 @@ from isaaclab.sensors import TiledCamera, ContactSensor
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import axis_angle_from_quat
+from isaaclab.markers import VisualizationMarkers
 
 from . import factory_control, factory_utils
 from .factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG, FactoryEnvCfg
@@ -101,11 +103,11 @@ class FactoryEnvReplay(DirectRLEnv):
         )
 
         self._robot = Articulation(self.cfg.robot)
-        self._fixed_asset = Articulation(self.cfg_task.fixed_asset)
-        self._held_asset = Articulation(self.cfg_task.held_asset)
+        self._fixed_asset = Articulation(self.cfg_task.fixed_asset) # type: ignore
+        self._held_asset = Articulation(self.cfg_task.held_asset) # type: ignore
         if self.cfg_task.name == "gear_mesh":
-            self._small_gear_asset = Articulation(self.cfg_task.small_gear_cfg)
-            self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg)
+            self._small_gear_asset = Articulation(self.cfg_task.small_gear_cfg) # type: ignore
+            self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg) # type: ignore
 
         self.measure_force = self.cfg.measure_force
         self.enable_cameras = self.cfg.enable_cameras
@@ -244,7 +246,7 @@ class FactoryEnvReplay(DirectRLEnv):
         # self.actions = self.ema_factor * action.clone().to(self.device) + (1 - self.ema_factor) * self.actions
         self.goal_fingertip_pos = action[:, 0:3]
         self.goal_fingertip_quat = action[:, 3:7]
-        self.goal_gripper_pos = action[:, -1:] * 2.0
+        self.goal_gripper_pos = action[:, -1:] * 1.6
 
     def _apply_action(self):
         """Apply actions for policy as delta targets from current position."""
@@ -429,18 +431,17 @@ class FactoryEnvReplay(DirectRLEnv):
 
         self.step_sim_no_action()
 
-    def _set_gear_mesh_state(self, gear_pos, gear_quat, base_pos, base_quat, env_ids):
-        """Set the gear mesh position and orientation."""
-        # assert len(env_ids) == gear_pos.shape[0] == base_pos.shape[0], "Length of env_ids and gear/base states must match."
+    def _set_assets_state(self, held_pos, held_quat, fixed_pos, fixed_quat, env_ids):
+        """Set the asset position and orientation."""
 
         # Disable gravity.
         physics_sim_view = sim_utils.SimulationContext.instance().physics_sim_view
         physics_sim_view.set_gravity(carb.Float3(0.0, 0.0, 0.0))
 
-        # Set fixed base state.
+        # Set fixed state.
         fixed_state = torch.zeros((len(env_ids), 13), device=self.device)
-        fixed_state[:, 0:3] = base_pos + self.scene.env_origins[env_ids]
-        fixed_state[:, 3:7] = base_quat
+        fixed_state[:, 0:3] = fixed_pos + self.scene.env_origins[env_ids]
+        fixed_state[:, 3:7] = fixed_quat
 
         self._fixed_asset.write_root_pose_to_sim(fixed_state[:, 0:7], env_ids=env_ids)
         self._fixed_asset.write_root_velocity_to_sim(fixed_state[:, 7:], env_ids=env_ids)
@@ -448,25 +449,26 @@ class FactoryEnvReplay(DirectRLEnv):
 
         self.step_sim_no_action()
 
-        # Set small and large gear states.
-        small_gear_state = self._small_gear_asset.data.default_root_state.clone()[env_ids]
-        small_gear_state[:, 0:7] = fixed_state[:, 0:7]
-        small_gear_state[:, 7:] = 0.0  # vel
-        self._small_gear_asset.write_root_pose_to_sim(small_gear_state[:, 0:7], env_ids=env_ids)
-        self._small_gear_asset.write_root_velocity_to_sim(small_gear_state[:, 7:], env_ids=env_ids)
-        self._small_gear_asset.reset()
+        if self.cfg_task.name == "gear_mesh":
+            # Set small and large gear states.
+            small_gear_state = self._small_gear_asset.data.default_root_state.clone()[env_ids]
+            small_gear_state[:, 0:7] = fixed_state[:, 0:7]
+            small_gear_state[:, 7:] = 0.0  # vel
+            self._small_gear_asset.write_root_pose_to_sim(small_gear_state[:, 0:7], env_ids=env_ids)
+            self._small_gear_asset.write_root_velocity_to_sim(small_gear_state[:, 7:], env_ids=env_ids)
+            self._small_gear_asset.reset()
 
-        large_gear_state = self._large_gear_asset.data.default_root_state.clone()[env_ids]
-        large_gear_state[:, 0:7] = fixed_state[:, 0:7]
-        large_gear_state[:, 7:] = 0.0  # vel
-        self._large_gear_asset.write_root_pose_to_sim(large_gear_state[:, 0:7], env_ids=env_ids)
-        self._large_gear_asset.write_root_velocity_to_sim(large_gear_state[:, 7:], env_ids=env_ids)
-        self._large_gear_asset.reset()
+            large_gear_state = self._large_gear_asset.data.default_root_state.clone()[env_ids]
+            large_gear_state[:, 0:7] = fixed_state[:, 0:7]
+            large_gear_state[:, 7:] = 0.0  # vel
+            self._large_gear_asset.write_root_pose_to_sim(large_gear_state[:, 0:7], env_ids=env_ids)
+            self._large_gear_asset.write_root_velocity_to_sim(large_gear_state[:, 7:], env_ids=env_ids)
+            self._large_gear_asset.reset()
 
-        # Set held gear state.
+        # Set held state.
         held_state = torch.zeros((len(env_ids), 13), device=self.device)
-        held_state[:, 0:3] = gear_pos + self.scene.env_origins[env_ids]
-        held_state[:, 3:7] = gear_quat
+        held_state[:, 0:3] = held_pos + self.scene.env_origins[env_ids]
+        held_state[:, 3:7] = held_quat
         held_state[:, 7:] = 0.0
         self._held_asset.write_root_pose_to_sim(held_state[:, 0:7])
         self._held_asset.write_root_velocity_to_sim(held_state[:, 7:])

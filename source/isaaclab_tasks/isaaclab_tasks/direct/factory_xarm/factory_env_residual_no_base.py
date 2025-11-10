@@ -515,6 +515,16 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
             self.device,
         )
 
+        if self.cfg_task.name == "peg_insert":
+            fingertip_pos = torch_utils.tf_combine(
+                self.fingertip_midpoint_quat,
+                self.fingertip_midpoint_pos,
+                torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
+                torch.tensor([0.0, 0.0, 0.03], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
+            )[1]
+        else:
+            fingertip_pos = self.fingertip_midpoint_pos.clone()
+
         offsets = factory_utils.get_keypoint_offsets(self.cfg_task.num_keypoints, self.device)
         keypoint_offsets = offsets * self.cfg_task.keypoint_scale
         for idx, keypoint_offset in enumerate(keypoint_offsets):
@@ -532,7 +542,7 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
             )[1]
             self.keypoints_fingertip[:, idx] = torch_utils.tf_combine(
                 self.fingertip_midpoint_quat,
-                self.fingertip_midpoint_pos,
+                fingertip_pos,
                 torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
                 keypoint_offset.repeat(self.num_envs, 1),
             )[1]
@@ -598,11 +608,19 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
 
         # reset assets
         if self.cfg_task.name == "gear_mesh":
-            self._set_gear_mesh_state( # NOTE: currently no noise added to actual object positions
-                gear_pos=self.initial_poses["gear_pos"][env_ids, self.episode_idx[env_ids]],
-                gear_quat=self.initial_poses["gear_quat"][env_ids, self.episode_idx[env_ids]],
-                base_pos=self.initial_poses["base_pos"][env_ids, self.episode_idx[env_ids]],
-                base_quat=self.initial_poses["base_quat"][env_ids, self.episode_idx[env_ids]],
+            self._set_assets_state( # NOTE: currently no noise added to actual object positions
+                held_pos=self.initial_poses["gear_pos"][env_ids, self.episode_idx[env_ids]],
+                held_quat=self.initial_poses["gear_quat"][env_ids, self.episode_idx[env_ids]],
+                fixed_pos=self.initial_poses["base_pos"][env_ids, self.episode_idx[env_ids]],
+                fixed_quat=self.initial_poses["base_quat"][env_ids, self.episode_idx[env_ids]],
+                env_ids=env_ids,
+            )
+        elif self.cfg_task.name == "peg_insert":
+            self._set_assets_state( # NOTE: currently no noise added to actual object positions
+                held_pos=self.initial_poses["peg_pos"][env_ids, self.episode_idx[env_ids]],
+                held_quat=self.initial_poses["peg_quat"][env_ids, self.episode_idx[env_ids]],
+                fixed_pos=self.initial_poses["base_pos"][env_ids, self.episode_idx[env_ids]],
+                fixed_quat=self.initial_poses["base_quat"][env_ids, self.episode_idx[env_ids]],
                 env_ids=env_ids,
             )
         else:
@@ -677,9 +695,8 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
 
         self.step_sim_no_action()
 
-    def _set_gear_mesh_state(self, gear_pos, gear_quat, base_pos, base_quat, env_ids):
-        """Set the gear mesh position and orientation."""
-        # assert len(env_ids) == gear_pos.shape[0] == base_pos.shape[0], "Length of env_ids and gear/base states must match."
+    def _set_assets_state(self, held_pos, held_quat, fixed_pos, fixed_quat, env_ids):
+        """Set the assets position and orientation."""
 
         # Disable gravity.
         physics_sim_view = sim_utils.SimulationContext.instance().physics_sim_view
@@ -687,8 +704,8 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
 
         # Set fixed base state.
         fixed_state = torch.zeros((len(env_ids), 13), device=self.device)
-        fixed_state[:, 0:3] = base_pos + self.scene.env_origins[env_ids]
-        fixed_state[:, 3:7] = base_quat
+        fixed_state[:, 0:3] = fixed_pos + self.scene.env_origins[env_ids]
+        fixed_state[:, 3:7] = fixed_quat
 
         self._fixed_asset.write_root_pose_to_sim(fixed_state[:, 0:7], env_ids=env_ids)
         self._fixed_asset.write_root_velocity_to_sim(fixed_state[:, 7:], env_ids=env_ids)
@@ -696,25 +713,26 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
 
         self.step_sim_no_action()
 
-        # Set small and large gear states.
-        small_gear_state = self._small_gear_asset.data.default_root_state.clone()[env_ids]
-        small_gear_state[:, 0:7] = fixed_state[:, 0:7]
-        small_gear_state[:, 7:] = 0.0  # vel
-        self._small_gear_asset.write_root_pose_to_sim(small_gear_state[:, 0:7], env_ids=env_ids)
-        self._small_gear_asset.write_root_velocity_to_sim(small_gear_state[:, 7:], env_ids=env_ids)
-        self._small_gear_asset.reset()
+        if self.cfg_task.name == "gear_mesh":
+            # Set small and large gear states.
+            small_gear_state = self._small_gear_asset.data.default_root_state.clone()[env_ids]
+            small_gear_state[:, 0:7] = fixed_state[:, 0:7]
+            small_gear_state[:, 7:] = 0.0  # vel
+            self._small_gear_asset.write_root_pose_to_sim(small_gear_state[:, 0:7], env_ids=env_ids)
+            self._small_gear_asset.write_root_velocity_to_sim(small_gear_state[:, 7:], env_ids=env_ids)
+            self._small_gear_asset.reset()
 
-        large_gear_state = self._large_gear_asset.data.default_root_state.clone()[env_ids]
-        large_gear_state[:, 0:7] = fixed_state[:, 0:7]
-        large_gear_state[:, 7:] = 0.0  # vel
-        self._large_gear_asset.write_root_pose_to_sim(large_gear_state[:, 0:7], env_ids=env_ids)
-        self._large_gear_asset.write_root_velocity_to_sim(large_gear_state[:, 7:], env_ids=env_ids)
-        self._large_gear_asset.reset(env_ids=env_ids)
+            large_gear_state = self._large_gear_asset.data.default_root_state.clone()[env_ids]
+            large_gear_state[:, 0:7] = fixed_state[:, 0:7]
+            large_gear_state[:, 7:] = 0.0  # vel
+            self._large_gear_asset.write_root_pose_to_sim(large_gear_state[:, 0:7], env_ids=env_ids)
+            self._large_gear_asset.write_root_velocity_to_sim(large_gear_state[:, 7:], env_ids=env_ids)
+            self._large_gear_asset.reset(env_ids=env_ids)
 
         # Set held gear state.
         held_state = torch.zeros((len(env_ids), 13), device=self.device)
-        held_state[:, 0:3] = gear_pos + self.scene.env_origins[env_ids]
-        held_state[:, 3:7] = gear_quat
+        held_state[:, 0:3] = held_pos + self.scene.env_origins[env_ids]
+        held_state[:, 3:7] = held_quat
         held_state[:, 7:] = 0.0
         self._held_asset.write_root_pose_to_sim(held_state[:, 0:7], env_ids=env_ids)
         self._held_asset.write_root_velocity_to_sim(held_state[:, 7:], env_ids=env_ids)

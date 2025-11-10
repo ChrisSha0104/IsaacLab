@@ -101,6 +101,9 @@ class Hole8mm(FixedAssetCfg):
 
 @configclass
 class PegInsert(FactoryTask):
+    initial_poses_path: str = "logs/data/teleop_peg_insert_9/initial_poses/initial_poses.pt" # NOTE: get this from replay (also validate)
+    action_data_path: str = "logs/data/teleop_peg_insert_9/robot_states/robot_trajectories.npz" # NOTE: get this from teleop
+
     name = "peg_insert"
     fixed_asset_cfg = Hole8mm()
     held_asset_cfg = Peg8mm()
@@ -161,7 +164,7 @@ class PegInsert(FactoryTask):
             usd_path=held_asset_cfg.usd_path,
             activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=True,
+                disable_gravity=False,
                 max_depenetration_velocity=5.0,
                 linear_damping=0.0,
                 angular_damping=0.0,

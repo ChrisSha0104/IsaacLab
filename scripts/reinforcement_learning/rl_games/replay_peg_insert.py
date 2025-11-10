@@ -170,18 +170,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # load traj & object data
     eps_idx = [0,1,2,3,4,5,6,7,8]
     assert env.unwrapped.num_envs == len(eps_idx), "Number of envs must match number of trajs to replay."
-    obj_states_path: str = "logs/data/teleop_gear_mesh_9/obj_states/object_states.npz"
+    obj_states_path: str = "logs/data/teleop_peg_insert_9/obj_states/object_states.npz"
     obj_data = np.load(obj_states_path, allow_pickle=True)
 
-    gear2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
-    gear2base_quat = torch.zeros((len(eps_idx), 4)).to(env.device)
-    gearbase2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
-    gearbase2base_quat = torch.zeros((len(eps_idx), 4)).to(env.device)
+    held2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
+    held2base_quat = torch.zeros((len(eps_idx), 4)).to(env.device)
+    fixed2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
+    fixed2base_quat = torch.zeros((len(eps_idx), 4)).to(env.device)
 
-    robot_states_path: str = "logs/data/teleop_gear_mesh_9/robot_states/robot_trajectories.npz"
+    robot_states_path: str = "logs/data/teleop_peg_insert_9/robot_states/robot_trajectories.npz"
     robot_data = np.load(robot_states_path, allow_pickle=True)
 
-    init_robot_qpos_path = "logs/data/teleop_gear_mesh_9/robot_states/init_qpos_sim.npy"
+    init_robot_qpos_path = "logs/data/teleop_peg_insert_9/robot_states/init_qpos_sim.npy"
     init_robot_qpos_data = np.load(init_robot_qpos_path, allow_pickle=True)
 
     max_ts = -1
@@ -199,13 +199,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     for i, ep in enumerate(eps_idx):
         eps_idx_key = f"episode_{eps_idx[i]:04d}"
-        gear2base_mat = torch.from_numpy(obj_data[f"{eps_idx_key}"][0]).to(env.device).reshape(4,4)
-        gear2base_pos[i] = gear2base_mat[:3, 3] + torch.tensor([-0.02025, 0.0, 0.0]).to(env.device)
-        gear2base_pos[i][2] = -0.0175
-        gear2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
+        held2base_mat = torch.from_numpy(obj_data[f"{eps_idx_key}"][0]).to(env.device).reshape(4,4)
+        held2base_pos[i] = held2base_mat[:3, 3]
+        held2base_pos[i][2] = 0.0
+        held2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
         # NOTE: need formal sys id
-        gearbase2base_pos[i] = torch.tensor([0.33, 0.0, 0.0]).to(env.device)
-        gearbase2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
+        # fixed2base_mat = torch.from_numpy(obj_data[f"episode_0000"][1]).to(env.device).reshape(4,4)
+        fixed2base_pos[i] = torch.tensor([0.346, 0.016, 0.0]).to(env.device)
+        # print("fixed2base_pos:", fixed2base_pos[i])
+        fixed2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
 
         # --- simple padding: repeat the last valid frame ---
         pos_np   = robot_data[f"{eps_idx_key}/action.eef_pos"]
@@ -239,18 +241,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # print("real init qpos:", real_init_qpos.shape, real_init_qpos)
 
     # if save initial states
-    if False:
-        out_path = "logs/data/teleop_gear_mesh_9/initial_poses"
+    if True:
+        out_path = "logs/data/teleop_peg_insert_9/initial_poses"
         os.makedirs(out_path, exist_ok=True)
         init_poses = {
             "robot": real_init_qpos, # (num_eps, 7)
-            "gear_pos": gear2base_pos, # (num_eps, 3)
-            "gear_quat": gear2base_quat, # (num_eps, 4)
-            "base_pos": gearbase2base_pos, # (num_eps, 3)
-            "base_quat": gearbase2base_quat, # (num_eps, 4)
+            "peg_pos": held2base_pos, # (num_eps, 3)
+            "peg_quat": held2base_quat, # (num_eps, 4)
+            "base_pos": fixed2base_pos, # (num_eps, 3)
+            "base_quat": fixed2base_quat, # (num_eps, 4)
         }
         torch.save(init_poses, os.path.join(out_path, "initial_poses.pt"))
         print(f"[INFO] Saved initial poses to: {os.path.join(out_path, 'initial_poses.pt')}")
+        exit(0)
 
     T = max_ts
     # reset environment
@@ -259,10 +262,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # set to initial pose
     env.unwrapped._set_replay_default_pose(real_init_qpos, env_ids=torch.arange(len(eps_idx), device=env.device))
     env.unwrapped._set_assets_state(
-        held_pos=gear2base_pos, 
-        held_quat=gear2base_quat, 
-        fixed_pos=gearbase2base_pos, 
-        fixed_quat=gearbase2base_quat,
+        held_pos=held2base_pos, 
+        held_quat=held2base_quat, 
+        fixed_pos=fixed2base_pos, 
+        fixed_quat=fixed2base_quat,
         env_ids=torch.arange(len(eps_idx), device=env.device)
     )
     obs = env.unwrapped._get_observations()
