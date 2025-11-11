@@ -163,14 +163,24 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
             self.scene.articulations["small_gear"] = self._small_gear_asset
             self.scene.articulations["large_gear"] = self._large_gear_asset
 
-        self.fingertip_marker = VisualizationMarkers(self.cfg.frame_marker_cfg)
-        self.base_fingertip_marker = VisualizationMarkers(self.cfg.frame_marker_cfg)
-        self.fixed_asset_marker = VisualizationMarkers(self.cfg.frame_marker_cfg)
-        self.held_asset_marker = VisualizationMarkers(self.cfg.frame_marker_cfg)
+        cfg = self.cfg.frame_marker_cfg
+        cfg.prim_path = "/World/markers/fingertip_marker"
+        self.fingertip_marker = VisualizationMarkers(cfg)
+        cfg.prim_path = "/World/markers/base_fingertip_marker"
+        self.base_fingertip_marker = VisualizationMarkers(cfg)
+        cfg.prim_path = "/World/markers/held_asset_marker"
+        self.fixed_asset_marker = VisualizationMarkers(cfg)
+        cfg.prim_path = "/World/markers/fixed_asset_marker"
+        self.held_asset_marker = VisualizationMarkers(cfg)
+        cfg.prim_path = "/World/markers/keypoint_held_marker"
 
-        self.keypoint_held_marker = VisualizationMarkers(self.cfg.keypoints_marker_cfg)
-        self.keypoint_fixed_marker = VisualizationMarkers(self.cfg.keypoints_marker_cfg)
-        self.keypoint_fingertip_marker = VisualizationMarkers(self.cfg.keypoints_marker_cfg)
+        cfg = self.cfg.keypoints_marker_cfg
+        cfg.prim_path = "/World/markers/keypoint_held_marker"
+        self.keypoint_held_marker = VisualizationMarkers(cfg)
+        cfg.prim_path = "/World/markers/keypoint_fixed_marker"
+        self.keypoint_fixed_marker = VisualizationMarkers(cfg)
+        cfg.prim_path = "/World/markers/keypoint_fingertip_marker"
+        self.keypoint_fingertip_marker = VisualizationMarkers(cfg)
 
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
@@ -201,7 +211,6 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
         self.held_pos = self._held_asset.data.root_pos_w - self.scene.env_origins
         self.held_quat = self._held_asset.data.root_quat_w
         self.held_pos_obs_frame = self.held_pos.clone() # TODO: check what transformation is needed
-        # TODO: add visualizations
 
         self.eef_pos = self._robot.data.body_pos_w[:, self.eef_body_idx] - self.scene.env_origins
         self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.eef_body_idx]
@@ -539,7 +548,7 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
                 torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
                 keypoint_offset.repeat(self.num_envs, 1),
             )[1]
-            self.keypoints_fingertip[:, idx] = torch_utils.tf_combine(
+            self.keypoints_fingertip[:, self.cfg_task.num_keypoints - idx - 1] = torch_utils.tf_combine(
                 self.fingertip_midpoint_quat,
                 fingertip_pos,
                 torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
@@ -773,8 +782,11 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
 
         for idx in range(self.cfg_task.num_keypoints):
             keypoints_held[:, idx] += self.scene.env_origins
+            # keypoints_held[:, idx] = keypoints_held[:,0] 
             keypoints_fixed[:, idx] += self.scene.env_origins
+            # keypoints_fixed[:, idx] = keypoints_fixed[:,0]
             keypoints_fingertip[:, idx] += self.scene.env_origins
+            # keypoints_fingertip[:, idx] = keypoints_fingertip[:,0]
 
         self.keypoint_held_marker.visualize(keypoints_held.reshape(-1,3))
         self.keypoint_fixed_marker.visualize(keypoints_fixed.reshape(-1,3))

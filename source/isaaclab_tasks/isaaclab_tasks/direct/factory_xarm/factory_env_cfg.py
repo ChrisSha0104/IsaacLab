@@ -325,7 +325,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         markers={
             "frame": sim_utils.UsdFileCfg(
                 usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
-                scale=(0.07, 0.07, 0.07))
+                scale=(0.05, 0.05, 0.05))
             }
         )
     
@@ -342,11 +342,11 @@ class FactoryEnvCfg(DirectRLEnvCfg):
             ),
             "sphere": sim_utils.SphereCfg(
                 radius=0.006,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
             ),
             "sphere": sim_utils.SphereCfg(
                 radius=0.006,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
             ),
         }
     )
