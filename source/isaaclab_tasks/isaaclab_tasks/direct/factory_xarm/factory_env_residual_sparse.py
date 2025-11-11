@@ -24,7 +24,7 @@ from .factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG, FactoryEnvCfg
 
 from .nn_buffer import NearestNeighborBuffer
 
-class FactoryEnvResidualAddDelta(DirectRLEnv):
+class FactoryEnvResidualSparse(DirectRLEnv):
     cfg: FactoryEnvCfg
 
     def __init__(self, cfg: FactoryEnvCfg, render_mode: str | None = None, **kwargs):
@@ -94,6 +94,15 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
         # Held asset.
         self.held_pos_obs_frame = torch.zeros((self.num_envs, 3), device=self.device)
         self.init_held_pos_obs_noise = torch.zeros((self.num_envs, 3), device=self.device)
+
+        self.held_center_pos_local = torch.zeros((self.num_envs, 3), device=self.device) # center2held transform
+        if self.cfg_task.name == "gear_mesh":
+            self.held_center_pos_local[:, 0] += self.cfg_task.fixed_asset_cfg.medium_gear_base_offset[0]
+            self.held_center_pos_local[:, 2] += self.cfg_task.held_asset_cfg.height / 2.0 * 1.1
+
+        elif self.cfg_task.name == "peg_insert":
+            self.held_center_pos_local[:, 2] += self.cfg_task.held_asset_cfg.height
+            self.held_center_pos_local[:, 2] -= self.cfg_task.robot_cfg.xarm_fingerpad_length / 3.0
 
         # Computer body indices.
         self.left_finger_body_idx = self._robot.body_names.index("left_finger") 
@@ -181,6 +190,9 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
         cfg.prim_path = "/Visuals/keypoint_fingertip_marker"
         self.keypoint_fingertip_marker = VisualizationMarkers(cfg)
 
+        self.red_sphere_marker = VisualizationMarkers(self.cfg.red_sphere_cfg)
+        self.blue_sphere_marker = VisualizationMarkers(self.cfg.blue_sphere_cfg)
+
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
@@ -209,7 +221,13 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
 
         self.held_pos = self._held_asset.data.root_pos_w - self.scene.env_origins
         self.held_quat = self._held_asset.data.root_quat_w
-        self.held_pos_obs_frame = self.held_pos.clone() # TODO: check what transformation is needed
+
+        self.held_pos_obs_frame = torch_utils.tf_combine(
+            self.held_quat,
+            self.held_pos,
+            torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
+            self.held_center_pos_local,
+        )[1]
 
         self.eef_pos = self._robot.data.body_pos_w[:, self.eef_body_idx] - self.scene.env_origins
         self.fingertip_midpoint_quat = self._robot.data.body_quat_w[:, self.eef_body_idx]
@@ -490,19 +508,29 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
         """Update rewards and compute success statistics."""
         # Get successful and failed envs at current timestep
         check_rot = self.cfg_task.name == "nut_thread"
-        curr_successes = self._get_curr_successes(
+        task_successes = self._get_curr_successes(
             success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
         )
+        task_engaged = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=False)
 
-        rew_dict, rew_scales = self._get_factory_rew_dict(curr_successes)
+        grasp_dist = torch.linalg.vector_norm(self.held_pos_obs_frame - self.fingertip_midpoint_pos, dim=1)
+        grasp_successes = torch.where(grasp_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        grasp_engaged = torch.where(grasp_dist < 0.04, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
-        rew_buf = torch.zeros_like(rew_dict["kp_objects_coarse"])
+        rew_dict = {
+            "grasp_success": grasp_successes.float(),
+            "grasp_engaged": grasp_engaged.float(),
+            "task_success": task_successes.float(),
+            "task_engaged": task_engaged.float(),
+        }
+
+        rew_buf = torch.zeros_like(rew_dict["task_success"])
         for rew_name, rew in rew_dict.items():
-            rew_buf += rew_dict[rew_name] * rew_scales[rew_name]
+            rew_buf += rew_dict[rew_name]
 
         self.prev_actions = self.actions.clone()
 
-        self._log_factory_metrics(rew_dict, curr_successes)
+        self._log_factory_metrics(rew_dict, task_successes)
         return rew_buf
 
     def _get_factory_rew_dict(self, curr_successes):
@@ -530,12 +558,7 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
                 torch.tensor([0.0, 0.0, 0.03], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
             )[1]
         else:
-            fingertip_pos = torch_utils.tf_combine(
-                self.fingertip_midpoint_quat,
-                self.fingertip_midpoint_pos,
-                torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1),
-                torch.tensor([0.0, 0.0, 0.015], device=self.device).unsqueeze(0).repeat(self.num_envs, 1), #TODO: change to 0.05 to grasp gear top
-            )[1]
+            fingertip_pos = self.fingertip_midpoint_pos.clone()
 
         offsets = factory_utils.get_keypoint_offsets(self.cfg_task.num_keypoints, self.device)
         keypoint_offsets = offsets * self.cfg_task.keypoint_scale
@@ -779,19 +802,22 @@ class FactoryEnvResidualAddDelta(DirectRLEnv):
         # self.fixed_asset_marker.visualize(self.fixed_pos_obs_frame + self.scene.env_origins, self.fixed_quat)
         self.base_fingertip_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins, self.base_actions[:,3:7])
         # self.fingertip_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins, self.fingertip_midpoint_quat)
+        
+        self.red_sphere_marker.visualize(self.held_pos_obs_frame + self.scene.env_origins, self.held_quat)
+        self.blue_sphere_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins, self.fingertip_midpoint_quat)
 
-        keypoints_held = self.keypoints_held.clone()
-        keypoints_fixed = self.keypoints_fixed.clone()
-        keypoints_fingertip = self.keypoints_fingertip.clone()
+        # keypoints_held = self.keypoints_held.clone()
+        # keypoints_fixed = self.keypoints_fixed.clone()
+        # keypoints_fingertip = self.keypoints_fingertip.clone()
 
-        for idx in range(self.cfg_task.num_keypoints):
-            keypoints_held[:, idx] += self.scene.env_origins
-            # keypoints_held[:, idx] = keypoints_held[:,0] 
-            keypoints_fixed[:, idx] += self.scene.env_origins
-            # keypoints_fixed[:, idx] = keypoints_fixed[:,0]
-            keypoints_fingertip[:, idx] += self.scene.env_origins
-            # keypoints_fingertip[:, idx] = keypoints_fingertip[:,0]
+        # for idx in range(self.cfg_task.num_keypoints):
+        #     keypoints_held[:, idx] += self.scene.env_origins
+        #     # keypoints_held[:, idx] = keypoints_held[:,0] 
+        #     keypoints_fixed[:, idx] += self.scene.env_origins
+        #     # keypoints_fixed[:, idx] = keypoints_fixed[:,0]
+        #     keypoints_fingertip[:, idx] += self.scene.env_origins
+        #     # keypoints_fingertip[:, idx] = keypoints_fingertip[:,0]
 
-        self.keypoint_held_marker.visualize(keypoints_held.reshape(-1,3))
-        self.keypoint_fixed_marker.visualize(keypoints_fixed.reshape(-1,3))
-        self.keypoint_fingertip_marker.visualize(keypoints_fingertip.reshape(-1,3))
+        # self.keypoint_held_marker.visualize(keypoints_held.reshape(-1,3))
+        # self.keypoint_fixed_marker.visualize(keypoints_fixed.reshape(-1,3))
+        # self.keypoint_fingertip_marker.visualize(keypoints_fingertip.reshape(-1,3))

@@ -32,7 +32,7 @@ class HeldAssetCfg:
 @configclass
 class RobotCfg:
     robot_usd: str = ""
-    franka_fingerpad_length: float = 0.017608
+    xarm_fingerpad_length: float = 0.04
     friction: float = 0.75
 
 
