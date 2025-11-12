@@ -8,6 +8,20 @@ import torch
 
 import isaacsim.core.utils.torch as torch_utils
 
+def quat_geodesic_angle(q1: torch.Tensor, q2: torch.Tensor, eps: float = 1e-8):
+    """
+    q1, q2: (..., 4) float tensors in [w, x, y, z] or [x, y, z, w]—either is fine
+            as long as both use the same convention.
+    Returns: (...,) radians in [0, pi]
+    """
+    # normalize
+    q1 = q1 / (q1.norm(dim=-1, keepdim=True).clamp_min(eps))
+    q2 = q2 / (q2.norm(dim=-1, keepdim=True).clamp_min(eps))
+
+    # dot, handle sign ambiguity
+    dot = torch.sum(q1 * q2, dim=-1).abs().clamp(-1 + eps, 1 - eps)
+
+    return 2.0 * torch.arccos(dot)
 
 def get_keypoint_offsets(num_keypoints, device):
     """Get uniformly-spaced keypoints along a line of unit length, centered at 0."""

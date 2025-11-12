@@ -49,7 +49,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         """Initialize buffers specific to residual policy."""
 
         self.base_actions_agent = NearestNeighborBuffer(
-            self.cfg_task.action_data_path, self.num_envs # type: ignore
+            self.cfg_task.action_data_path, self.num_envs, horizon=45 # type: ignore
         )
         self.base_actions = torch.zeros((self.num_envs, 8), device=self.device)
 
@@ -438,7 +438,12 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         self._compute_base_actions()
         self._visualize_markers()
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        terminated = torch.norm(self.fingertip_midpoint_pos - self.held_pos, dim=1) > 0.15
+        terminated = torch.norm(self.fingertip_midpoint_pos - self.held_pos_obs_frame, dim=1) > 0.15
+
+        if self.cfg_task.name == "peg_insert":
+            unit_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
+            tilt_degrees = factory_utils.quat_geodesic_angle(self.held_quat, unit_quat) * 180.0 / math.pi
+            terminated |= torch.where(tilt_degrees > 30.0, torch.ones_like(terminated), torch.zeros_like(terminated)).bool()
 
         return terminated, time_out
 
