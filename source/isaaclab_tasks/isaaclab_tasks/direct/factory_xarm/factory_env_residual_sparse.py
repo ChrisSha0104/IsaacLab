@@ -98,7 +98,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         self.held_center_pos_local = torch.zeros((self.num_envs, 3), device=self.device) # center2held transform
         if self.cfg_task.name == "gear_mesh":
             self.held_center_pos_local[:, 0] += self.cfg_task.fixed_asset_cfg.medium_gear_base_offset[0]
-            self.held_center_pos_local[:, 2] += self.cfg_task.held_asset_cfg.height / 2.0 * 1.1
+            self.held_center_pos_local[:, 2] += self.cfg_task.held_asset_cfg.height / 2.0
 
         elif self.cfg_task.name == "peg_insert":
             self.held_center_pos_local[:, 2] += self.cfg_task.held_asset_cfg.height
