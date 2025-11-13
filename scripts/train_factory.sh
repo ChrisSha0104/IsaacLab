@@ -23,7 +23,13 @@
 #     --track --wandb-project-name FactoryXarm --wandb-name xarm-peginsert-residual-add-delta-fixed-rew-v3 --wandb-entity ss7050-columbia \
 #     --headless agent.params.config.full_experiment_name=peg_insert_residual_add_delta_fixed_rew_v3
 
+# CUDA_VISIBLE_DEVICES=0 python scripts/reinforcement_learning/rl_games/train.py \
+#     --task Isaac-Factory-Xarm-GearMesh-Residual-Sparse  --num_envs 128 \
+#     --track --wandb-project-name FactoryXarm --wandb-name xarm-gearmesh-residual-sparse-v0 --wandb-entity ss7050-columbia \
+#     --headless agent.params.config.full_experiment_name=gear_mesh_residual_sparse_v0
+
+
 CUDA_VISIBLE_DEVICES=0 python scripts/reinforcement_learning/rl_games/train.py \
-    --task Isaac-Factory-Xarm-GearMesh-Residual-Sparse  --num_envs 128 \
-    --track --wandb-project-name FactoryXarm --wandb-name xarm-gearmesh-residual-sparse-v0 --wandb-entity ss7050-columbia \
-    --headless agent.params.config.full_experiment_name=gear_mesh_residual_sparse_v0
+    --task Isaac-Factory-Xarm-PegInsert-Residual-Sparse  --num_envs 128 \
+    --track --wandb-project-name FactoryXarm --wandb-name xarm-peginsert-residual-sparse-h60-close-grip-better-task-engage-v5 --wandb-entity ss7050-columbia \
+    --headless agent.params.config.full_experiment_name=peg_insert_residual_sparse_h60_close_grip_better_task_engage_v5

@@ -49,7 +49,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         """Initialize buffers specific to residual policy."""
 
         self.base_actions_agent = NearestNeighborBuffer(
-            self.cfg_task.action_data_path, self.num_envs, horizon=45 # type: ignore
+            self.cfg_task.action_data_path, self.num_envs, horizon=60 # type: ignore
         )
         self.base_actions = torch.zeros((self.num_envs, 8), device=self.device)
 
@@ -131,6 +131,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
 
         self.actions = torch.zeros((self.num_envs, self.cfg.action_space), device=self.device)
         self.prev_actions = torch.zeros_like(self.actions)
+        self.env_actions = torch.zeros((self.num_envs, 8), device=self.device)
 
     def _setup_scene(self):
         """Initialize simulation scene."""
@@ -192,6 +193,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
 
         self.red_sphere_marker = VisualizationMarkers(self.cfg.red_sphere_cfg)
         self.blue_sphere_marker = VisualizationMarkers(self.cfg.blue_sphere_cfg)
+        self.green_sphere_marker = VisualizationMarkers(self.cfg.green_sphere_cfg)
 
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
@@ -392,8 +394,11 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         )
 
         ngripper = torch.clamp(self.base_actions[:, 7:8] + self.actions[:, 6:7], 0.0, 1.0)
+        # ngripper = torch.clamp(self.base_actions[:, 7:8], 0.0, 1.0)
         gripper = 1.6 * ngripper
         ctrl_target_gripper_dof_pos = gripper  # (num_envs, 1)
+
+        self.env_actions = torch.cat([ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, ctrl_target_gripper_dof_pos], dim=-1)
 
         self.generate_ctrl_signals(
             ctrl_target_fingertip_midpoint_pos=ctrl_target_fingertip_midpoint_pos,
@@ -516,11 +521,36 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         task_successes = self._get_curr_successes(
             success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
         )
-        task_engaged = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=False)
+        # task_engaged = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=False)
+
+        held_base_pos, held_base_quat = factory_utils.get_held_base_pose(
+            self.held_pos, self.held_quat, self.cfg_task.name, self.cfg_task.fixed_asset_cfg, self.num_envs, self.device
+        )
+        target_held_base_pos, target_held_base_quat = factory_utils.get_target_held_base_pose(
+            self.fixed_pos,
+            self.fixed_quat,
+            self.cfg_task.name,
+            self.cfg_task.fixed_asset_cfg,
+            self.num_envs,
+            self.device,
+        )
+
+        target_held_base_pos[:, 2] += self.cfg_task.fixed_asset_cfg.height
+
+        # self.red_sphere_marker.visualize(target_held_base_pos + self.scene.env_origins)
+        # self.blue_sphere_marker.visualize(held_base_pos + self.scene.env_origins)
+
+        insert_dist = torch.linalg.vector_norm(target_held_base_pos - held_base_pos, dim=1)
+        task_engaged = torch.where(insert_dist < 0.02, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
         grasp_dist = torch.linalg.vector_norm(self.held_pos_obs_frame - self.fingertip_midpoint_pos, dim=1)
         grasp_successes = torch.where(grasp_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
         grasp_engaged = torch.where(grasp_dist < 0.04, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+
+        if self.cfg_task.name == "peg_insert":
+            close_gripper = torch.where(self.gripper.squeeze(-1) >= 1.57, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+            grasp_successes = torch.logical_and(grasp_successes, close_gripper)
+            grasp_engaged = torch.logical_and(grasp_engaged, close_gripper)
 
         rew_dict = {
             "grasp_success": grasp_successes.float(),
@@ -692,6 +722,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         # Set initial actions to involve no-movement. Needed for EMA/correct penalties.
         self.actions[env_ids] = torch.zeros_like(self.actions[env_ids])
         self.prev_actions[env_ids] = torch.zeros_like(self.actions[env_ids])
+        self.env_actions[env_ids] = torch.zeros_like(self.env_actions[env_ids])
 
         # Zero initial velocity.
         self.ee_angvel_fd[env_ids, :] = 0.0
@@ -805,15 +836,35 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         # visualize states
         # self.held_asset_marker.visualize(self.held_pos_obs_frame + self.scene.env_origins, self.held_quat)
         # self.fixed_asset_marker.visualize(self.fixed_pos_obs_frame + self.scene.env_origins, self.fixed_quat)
-        self.base_fingertip_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins, self.base_actions[:,3:7])
+        # self.base_fingertip_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins, self.base_actions[:,3:7])
         # self.fingertip_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins, self.fingertip_midpoint_quat)
         
-        self.red_sphere_marker.visualize(self.held_pos_obs_frame + self.scene.env_origins, self.held_quat)
-        self.blue_sphere_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins, self.fingertip_midpoint_quat)
+        # self.green_sphere_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins, self.base_actions[:,3:7])
+        # self.blue_sphere_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins, self.fingertip_midpoint_quat)
+        # self.red_sphere_marker.visualize(self.env_actions[:, :3] + self.scene.env_origins, self.env_actions[:, 3:7])
+
+        from isaacsim.util.debug_draw import _debug_draw #TODO
+        draw = _debug_draw.acquire_debug_draw_interface()
+        draw.clear_lines()
+
+        curr_pos_list = (self.fingertip_midpoint_pos + self.scene.env_origins).cpu().numpy().tolist()
+        base_pos_list = (self.base_actions[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
+        env_pos_list = (self.env_actions[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
+
+        sizes = [5] * self.num_envs
+        red_color = [(1, 0, 0, 1)] * self.num_envs
+        blue_color = [(0, 0, 1, 1)] * self.num_envs
+        green_color = [(0, 1, 0, 1)] * self.num_envs
+
+        draw.draw_lines(curr_pos_list, base_pos_list, blue_color, sizes)
+        draw.draw_lines(base_pos_list, env_pos_list, red_color, sizes)
+        draw.draw_lines(curr_pos_list, env_pos_list, green_color, sizes)
+
+        # print("env actions:", self.env_actions[:, :3].cpu().numpy())
 
         # keypoints_held = self.keypoints_held.clone()
         # keypoints_fixed = self.keypoints_fixed.clone()
-        # keypoints_fingertip = self.keypoints_fingertip.clone()
+        # keypoints_fingertip = lself.keypoints_fingertip.clone()
 
         # for idx in range(self.cfg_task.num_keypoints):
         #     keypoints_held[:, idx] += self.scene.env_origins

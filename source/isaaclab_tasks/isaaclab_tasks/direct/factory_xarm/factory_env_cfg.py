@@ -352,7 +352,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     )
 
     red_sphere_cfg = VisualizationMarkersCfg(
-        prim_path="/Visuals/held_asset_sphere_marker",
+        prim_path="/Visuals/red_sphere_marker",
         markers={
             "sphere": sim_utils.SphereCfg(
                 radius=0.006,
@@ -362,7 +362,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     )
 
     blue_sphere_cfg = VisualizationMarkersCfg(
-        prim_path="/Visuals/fixed_asset_sphere_marker",
+        prim_path="/Visuals/blue_sphere_marker",
         markers={
             "sphere": sim_utils.SphereCfg(
                 radius=0.006,
@@ -370,6 +370,17 @@ class FactoryEnvCfg(DirectRLEnvCfg):
             )
         }
     )
+
+    green_sphere_cfg = VisualizationMarkersCfg(
+        prim_path="/Visuals/green_sphere_marker",
+        markers={
+            "sphere": sim_utils.SphereCfg(
+                radius=0.006,
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+            )
+        }
+    )
+
 
 @configclass
 class FactoryTaskPegInsertCfg(FactoryEnvCfg):
