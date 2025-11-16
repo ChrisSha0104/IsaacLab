@@ -13,6 +13,7 @@ from .factory_env_residual import FactoryEnvResidual
 from .factory_env_residual_add import FactoryEnvResidualAddDelta
 from .factory_env_residual_no_base import FactoryEnvResidualNoBase
 from .factory_env_residual_sparse import FactoryEnvResidualSparse
+from .factory_env_residual_sparse_new import FactoryEnvResidualSparseNew
 from .factory_env_cfg import FactoryTaskGearMeshCfg, FactoryTaskNutThreadCfg, FactoryTaskPegInsertCfg
 
 ##
@@ -152,6 +153,26 @@ gym.register(
 gym.register(
     id="Isaac-Factory-Xarm-GearMesh-Residual-Sparse",
     entry_point="isaaclab_tasks.direct.factory_xarm:FactoryEnvResidualSparse",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": FactoryTaskGearMeshCfg,
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="Isaac-Factory-Xarm-PegInsert-Residual-Sparse-New",
+    entry_point="isaaclab_tasks.direct.factory_xarm:FactoryEnvResidualSparseNew",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": FactoryTaskPegInsertCfg,
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="Isaac-Factory-Xarm-GearMesh-Residual-Sparse-New",
+    entry_point="isaaclab_tasks.direct.factory_xarm:FactoryEnvResidualSparseNew",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": FactoryTaskGearMeshCfg,

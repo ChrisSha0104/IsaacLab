@@ -51,6 +51,7 @@ STATE_DIM_CFG = {
     "ema_factor": 1,
     "pos_threshold": 3,
     "rot_threshold": 3,
+    "gripper_threshold": 1,
     "base_actions": 8,
 }
 
@@ -104,6 +105,11 @@ class CtrlCfg:
 
     pos_action_threshold = [0.05, 0.05, 0.05]
     rot_action_threshold = [0.097, 0.097, 0.097]
+    gripper_action_threshold = [0.1]
+
+    res_pos_action_threshold = [0.01, 0.01, 0.01]
+    res_rot_action_threshold = [0.097, 0.097, 0.097]
+    res_gripper_action_threshold = [0.1]
 
     reset_joints = [0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0]
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]

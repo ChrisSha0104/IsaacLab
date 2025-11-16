@@ -24,7 +24,7 @@ from .factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG, FactoryEnvCfg
 
 from .nn_buffer import NearestNeighborBuffer
 
-class FactoryEnvResidualSparse(DirectRLEnv):
+class FactoryEnvResidualSparseNew(DirectRLEnv):
     cfg: FactoryEnvCfg
 
     def __init__(self, cfg: FactoryEnvCfg, render_mode: str | None = None, **kwargs):
@@ -69,10 +69,13 @@ class FactoryEnvResidualSparse(DirectRLEnv):
             (self.num_envs, 1)
         )
 
-        self.pos_threshold = torch.tensor(self.cfg.ctrl.pos_action_threshold, device=self.device).repeat(
+        self.pos_threshold = torch.tensor(self.cfg.ctrl.res_pos_action_threshold, device=self.device).repeat(
             (self.num_envs, 1)
         )
-        self.rot_threshold = torch.tensor(self.cfg.ctrl.rot_action_threshold, device=self.device).repeat(
+        self.rot_threshold = torch.tensor(self.cfg.ctrl.res_rot_action_threshold, device=self.device).repeat(
+            (self.num_envs, 1)
+        )
+        self.gripper_threshold = torch.tensor(self.cfg.ctrl.res_gripper_action_threshold, device=self.device).repeat(
             (self.num_envs, 1)
         )
 
@@ -319,6 +322,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
             # "task_prop_gains": self.task_prop_gains,
             "pos_threshold": self.pos_threshold,
             "rot_threshold": self.rot_threshold,
+            "gripper_threshold": self.gripper_threshold,
             "prev_actions": prev_actions,
             "base_actions": self.base_actions, 
         }
@@ -394,10 +398,9 @@ class FactoryEnvResidualSparse(DirectRLEnv):
             roll=target_euler_xyz[:, 0], pitch=target_euler_xyz[:, 1], yaw=target_euler_xyz[:, 2]
         )
 
-        ngripper = torch.clamp(self.base_actions[:, 7:8] + self.actions[:, 6:7], 0.0, 1.0)
-        # ngripper = torch.clamp(self.base_actions[:, 7:8], 0.0, 1.0)
-        gripper = 1.6 * ngripper
-        ctrl_target_gripper_dof_pos = gripper  # (num_envs, 1)
+        gripper_action = self.actions[:, 6:7] * self.gripper_threshold
+        ngripper = torch.clamp(self.base_actions[:, 7:8] + gripper_action, 0.0, 1.0)
+        ctrl_target_gripper_dof_pos = torch.where(ngripper > 0.5, torch.ones_like(ngripper) * self.cfg_task.close_gripper, torch.zeros_like(ngripper))
 
         self.env_actions = torch.cat([ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, ctrl_target_gripper_dof_pos], dim=-1)
 

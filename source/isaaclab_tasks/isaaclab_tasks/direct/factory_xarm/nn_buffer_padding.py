@@ -85,12 +85,11 @@ class NearestNeighborBuffer:
         N, dev = pos.shape[0], pos.device
         if self._queued is None or self._queued.device != dev:
             self._queued = torch.empty((self._num_envs, self._horizon, 8), device=dev)
-            self._queued_idx = torch.empty((self._num_envs, self._horizon), dtype=torch.long, device=dev)
 
         # Which envs need refill?
-        refill = (self._q_ptr >= self._q_len)
-        if refill.any():
-            ids = refill.nonzero(as_tuple=False).squeeze(-1)   # (M,)
+        need = (self._q_ptr >= self._q_len)
+        if need.any():
+            ids = need.nonzero(as_tuple=False).squeeze(-1)   # (M,)
             # subset inputs
             t0, L = self._nn_indices(eidx[ids], pos[ids], None if quat is None else quat[ids],
                                      None if grip is None else grip[ids], verbose)
@@ -102,7 +101,6 @@ class NearestNeighborBuffer:
             a = torch.cat([torch.gather(ap,1,gi3), torch.gather(aq,1,gi4), torch.gather(ag,1,gi1)], dim=-1)  # (M,H,8)
 
             self._queued[ids] = a
-            self._queued_idx[ids] = idx
             self._q_ptr[ids] = 0
             self._q_len[ids] = self._horizon
 
@@ -110,38 +108,6 @@ class NearestNeighborBuffer:
         env_ids = torch.arange(N, device=dev)
         step_idx = torch.minimum(self._q_ptr.to(dev), (self._q_len - 1).clamp(min=0).to(dev))
         out = self._queued[env_ids, step_idx, :]             # (N,8)
-
-        # Naive relevance check: compare queried pos to obs at the source timestep
-        src_t = self._queued_idx[env_ids, step_idx]                    # (N,)
-        obs_p_all = self._obs_pos.to(dev)[eidx]                        # (N, T, 3)
-        obs_at = obs_p_all[env_ids, src_t, :]                          # (N, 3)
-        dist = torch.norm(obs_at - pos, dim=-1)                        # (N,)
-        bad = (dist > 0.03)                                            # > 3 cm
-
-        # if bad.any():
-        #     bad_ids = env_ids[bad]
-        #     # resample for only the bad envs and take the first action
-        #     t0_bad, L_bad = self._nn_indices(eidx[bad_ids], pos[bad_ids],
-        #                                     None if quat is None else quat[bad_ids],
-        #                                     None if grip is None else grip[bad_ids],
-        #                                     verbose)
-        #     ar = torch.arange(self._horizon, device=dev)
-        #     idx_bad = torch.minimum(t0_bad[:, None] + ar, (L_bad - 1).clamp(min=0)[:, None])
-        #     ap = self._act_pos.to(dev)[eidx[bad_ids]]
-        #     aq = self._act_quat.to(dev)[eidx[bad_ids]]
-        #     ag = self._act_grip.to(dev)[eidx[bad_ids]]
-        #     gi3 = idx_bad[..., None].expand(-1, -1, 3)
-        #     gi4 = idx_bad[..., None].expand(-1, -1, 4)
-        #     gi1 = idx_bad[..., None].expand(-1, -1, 1)
-        #     a_bad = torch.cat([
-        #         torch.gather(ap, 1, gi3), torch.gather(aq, 1, gi4), torch.gather(ag, 1, gi1)
-        #     ], dim=-1)
-
-        #     self._queued[bad_ids] = a_bad
-        #     self._queued_idx[bad_ids] = idx_bad
-        #     self._q_ptr[bad_ids] = 1                                    # consumed the first step now
-        #     self._q_len[bad_ids] = self._horizon
-        #     out[bad] = a_bad[:, 0, :]                                    # use fresh first action
 
         # Advance ptr only where we have data
         has_data = (self._q_ptr < self._q_len)

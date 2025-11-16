@@ -103,7 +103,8 @@ class Hole8mm(FixedAssetCfg):
 class PegInsert(FactoryTask):
     initial_poses_path: str = "logs/data/teleop_peg_insert_9/initial_poses/initial_poses.pt" # NOTE: get this from replay (also validate)
     action_data_path: str = "logs/data/teleop_peg_insert_9/robot_states/robot_trajectories.npz" # NOTE: get this from teleop
-
+    close_gripper: float = 1.575
+    
     name = "peg_insert"
     fixed_asset_cfg = Hole8mm()
     held_asset_cfg = Peg8mm()
@@ -177,6 +178,7 @@ class PegInsert(FactoryTask):
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=held_asset_cfg.mass),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+            # visual_material=sim_utils.PreviewSurfaceCfg(opacity=1.0),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.4, 0.1), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
@@ -208,6 +210,7 @@ class GearMesh(FactoryTask):
     initial_poses_path: str = "logs/data/teleop_gear_mesh_9/initial_poses/initial_poses.pt" # NOTE: get this from replay (also validate)
     action_data_path: str = "logs/data/teleop_gear_mesh_9/robot_states/robot_trajectories.npz" # NOTE: get this from teleop
 
+    close_gripper: float = 1.18
     name = "gear_mesh"
     fixed_asset_cfg = GearBase()
     held_asset_cfg = MediumGear()
