@@ -236,21 +236,18 @@ def get_task_space_error(
 
 def compute_dof_state_admittance(
     cfg,
-    dof_pos, dof_vel,
+    dof_pos,
     eef_pos, eef_quat,
-    eef_linvel, eef_angvel,      # not used inside the law anymore
     jacobian,
     ctrl_target_eef_pos, 
     ctrl_target_eef_quat,
     dt, device,
     xdot_ref,                    # (B,6) controller internal state (pass in/out)
     F_ext=None,                  # (B,6), default zeros
-    Kx=200.0, Dx=None, mx=0.1,
-    Kr=50.0,  Dr=None, mr=0.01,
+    Kx=200.0, Dx=None, mx=1.0,
+    Kr=50.0,  Dr=None, mr=0.1,
     lam=1e-2,
     rot_scale=0.25,
-    v_task_limits=(0.25, 0.6),    # (lin m/s, ang rad/s) # TODO: debug if needed?
-    qd_limit=1.5,
     alpha=1.0
 ):
     B, _ = dof_pos.shape

@@ -97,6 +97,10 @@ class ObsRandCfg:
     held_asset_pos = [0.001, 0.001, 0.001]
 
 @configclass
+class BaseActionRandCfg:
+    horizon = [15, 75]
+
+@configclass
 class CtrlCfg:
     ema_factor = 0.2
 
@@ -107,9 +111,16 @@ class CtrlCfg:
     rot_action_threshold = [0.097, 0.097, 0.097]
     gripper_action_threshold = [0.1]
 
-    res_pos_action_threshold = [0.01, 0.01, 0.01]
+    res_pos_action_threshold = [0.00025, 0.00025, 0.00025] # 0.25mm -> action 0.5mm
     res_rot_action_threshold = [0.097, 0.097, 0.097]
     res_gripper_action_threshold = [0.1]
+
+    Kx_dmr_range = [100, 300]
+    Kr_dmr_range = [20, 50]
+    mx_dmr_range = [0.2, 0.05]
+    mr_dmr_range = [0.02, 0.005]
+    lam_dmr_range = [1e-3, 1e-2]
+
 
     reset_joints = [0.035, -0.323, 0.0, 0.523, 0.0, 1.31, 0.0]
     reset_task_prop_gains = [300, 300, 300, 20, 20, 20]
@@ -210,6 +221,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     task: FactoryTask = FactoryTask()
     obs_rand: ObsRandCfg = ObsRandCfg()
     ctrl: CtrlCfg = CtrlCfg()
+    base_rand: BaseActionRandCfg = BaseActionRandCfg()
 
     episode_length_s = 10.0  # Probably need to override.
     sim: SimulationCfg = SimulationCfg(
@@ -298,13 +310,13 @@ class FactoryEnvCfg(DirectRLEnvCfg):
                 joint_names_expr=["gripper"], 
                 # effort_limit_sim=40.0,
                 # velocity_limit_sim=0.04,
-                stiffness=7500.0, # 5
-                damping=173.0, #0.0
+                stiffness=5.0, # 5
+                damping=0.0, #0.0
             ),
         },
     )
     
-    fingertip2eef_offset = [0.0, 0.0, 0.17]
+    fingertip2eef_offset = [0.0, 0.0, 0.15]
 
     eef_contact_sensor_cfg = ContactSensorCfg(
         prim_path="/World/envs/env_.*/robot/link7",

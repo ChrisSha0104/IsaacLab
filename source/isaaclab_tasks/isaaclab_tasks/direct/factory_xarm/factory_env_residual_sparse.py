@@ -50,7 +50,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         self.teleop_mode = False
 
         self.base_actions_agent = NearestNeighborBuffer(
-            self.cfg_task.action_data_path, self.num_envs, horizon=60 # type: ignore
+            self.cfg_task.action_data_path, self.num_envs, horizon=45, device=self.device # type: ignore
         )
         self.base_actions = torch.zeros((self.num_envs, 8), device=self.device)
 
@@ -416,11 +416,8 @@ class FactoryEnvResidualSparse(DirectRLEnv):
         self.arm_joint_pose_target, self.joint_vel_target, x_acc, _, self.eef_vel = factory_control.compute_dof_state_admittance(
             cfg=self.cfg,
             dof_pos=self.joint_pos,
-            dof_vel=self.joint_vel,
             eef_pos=self.fingertip_midpoint_pos,
             eef_quat=self.fingertip_midpoint_quat,
-            eef_linvel=self.fingertip_midpoint_linvel, # actually eef linvel
-            eef_angvel=self.fingertip_midpoint_angvel,
             jacobian=self.fingertip_midpoint_jacobian,
             ctrl_target_eef_pos=ctrl_target_fingertip_midpoint_pos,
             ctrl_target_eef_quat=ctrl_target_fingertip_midpoint_quat,
@@ -428,6 +425,7 @@ class FactoryEnvResidualSparse(DirectRLEnv):
             dt=self.physics_dt,
             F_ext=self.F_ext if self.measure_force else None, # NOTE: external wrench at eef frame
             device=self.device,
+            mx=0.1, mr=0.01
         )
 
         self._robot.set_joint_position_target(self.arm_joint_pose_target, joint_ids=self.arm_dof_idx)

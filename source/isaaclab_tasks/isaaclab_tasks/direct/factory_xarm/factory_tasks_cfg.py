@@ -210,6 +210,9 @@ class GearMesh(FactoryTask):
     initial_poses_path: str = "logs/data/teleop_gear_mesh_9/initial_poses/initial_poses.pt" # NOTE: get this from replay (also validate)
     action_data_path: str = "logs/data/teleop_gear_mesh_9/robot_states/robot_trajectories.npz" # NOTE: get this from teleop
 
+    initial_poses_path_v2: str = "logs/data/1117_teleop_gear_mesh_20/initial_poses/initial_poses.pt" # NOTE: get this from replay (also validate)
+    action_data_path_v2: str = "logs/data/1117_teleop_gear_mesh_20/robot_states/robot_trajectories.npz" # NOTE: get this from teleop
+
     close_gripper: float = 1.18
     name = "gear_mesh"
     fixed_asset_cfg = GearBase()
