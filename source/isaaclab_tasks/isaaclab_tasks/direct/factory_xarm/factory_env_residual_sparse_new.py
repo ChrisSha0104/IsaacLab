@@ -139,6 +139,11 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         self.ep_succeeded = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
         self.ep_success_times = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
 
+        self.eps_grasp_engaged = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
+        self.eps_grasp_succeeded = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
+        self.eps_task_engaged = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
+        self.eps_task_succeeded = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
+
         self.keypoints_fingertip = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
         self.keypoints_held = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
         self.keypoints_fixed = torch.zeros((self.num_envs, self.cfg_task.num_keypoints, 3), device=self.device)
@@ -347,6 +352,10 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         """Reset buffers."""
         self.ep_succeeded[env_ids] = 0
         self.ep_success_times[env_ids] = 0
+        self.eps_grasp_engaged[env_ids] = 0
+        self.eps_grasp_succeeded[env_ids] = 0
+        self.eps_task_engaged[env_ids] = 0
+        self.eps_task_succeeded[env_ids] = 0
 
     def _pre_physics_step(self, action):
         """Apply policy actions with smoothing."""
@@ -566,6 +575,19 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             close_gripper = torch.where(self.gripper.squeeze(-1) >= 1.57, torch.ones_like(task_successes), torch.zeros_like(task_successes))
             grasp_successes = torch.logical_and(grasp_successes, close_gripper)
             grasp_engaged = torch.logical_and(grasp_engaged, close_gripper)
+
+        # first_grasp_engaged = torch.logical_and(grasp_engaged, torch.logical_not(self.eps_grasp_engaged))
+        # self.eps_grasp_engaged[grasp_engaged] = 1
+        # grasp_engaged = torch.logical_and(grasp_engaged, first_grasp_engaged)
+        # first_task_engaged = torch.logical_and(task_engaged, torch.logical_not(self.eps_task_engaged))
+        # self.eps_task_engaged[task_engaged] = 1
+        # task_engaged = torch.logical_and(task_engaged, first_task_engaged)
+        # first_grasp_succeeded = torch.logical_and(grasp_successes, torch.logical_not(self.eps_grasp_succeeded))
+        # self.eps_grasp_succeeded[grasp_successes] = 1
+        # grasp_successes = torch.logical_and(grasp_successes, first_grasp_succeeded)
+        # first_task_succeeded = torch.logical_and(task_successes, torch.logical_not(self.eps_task_succeeded))
+        # self.eps_task_succeeded[task_successes] = 1
+        # task_successes = torch.logical_and(task_successes, first_task_succeeded)
 
         rew_dict = {
             "grasp_success": grasp_successes.float(),
