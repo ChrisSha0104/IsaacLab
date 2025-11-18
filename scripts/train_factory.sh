@@ -38,5 +38,5 @@ time="$(date +%Y-%m-%d_%H-%M-%S)"
 
 CUDA_VISIBLE_DEVICES=0 python scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Factory-Xarm-GearMesh-Residual-Sparse-New  --num_envs 128 \
-    --track --wandb-project-name FactoryXarm --wandb-name xarm-gearmesh-residual-dmr-v0 --wandb-entity ss7050-columbia \
-    --headless agent.params.config.full_experiment_name=${time}_gear_mesh_residual_sparse_dmr_v0
+    --track --wandb-project-name FactoryXarm --wandb-name xarm-gearmesh-residual-verify-new-data-full-gripper --wandb-entity ss7050-columbia \
+    --headless agent.params.config.full_experiment_name=${time}_gear_mesh_residual_sparse_verify_new_data_full_gripper
