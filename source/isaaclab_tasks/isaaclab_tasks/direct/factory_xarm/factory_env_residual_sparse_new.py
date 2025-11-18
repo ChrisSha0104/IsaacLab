@@ -69,7 +69,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         self.Kx = 200.0
         self.Kr = 50.0
         self.mx = 0.1
-        self.mr = 1.0
+        self.mr = 0.01
         self.lam = 1e-2
 
     def _set_default_dynamics_parameters(self):
@@ -121,7 +121,8 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         self.left_finger_body_idx = self._robot.body_names.index("left_finger") 
         self.right_finger_body_idx = self._robot.body_names.index("right_finger")
         self.eef_body_idx = self._robot.body_names.index("link7") # TODO: change logic to fingertip == T(eef)
-        self.fingertip2eef_offset = torch.tensor([self.cfg.fingertip2eef_offset], device=self.device).repeat(self.num_envs, 1)
+        self.sim_fingertip2eef = torch.tensor([self.cfg.sim_fingertip2eef], device=self.device).repeat(self.num_envs, 1)
+        self.real_fingertip2eef = torch.tensor([self.cfg.real_fingertip2eef], device=self.device).repeat(self.num_envs, 1)
         self.arm_dof_idx, _ = self._robot.find_joints("joint.*")
         self.gripper_dof_idx, _ = self._robot.find_joints("gripper")
 
@@ -164,6 +165,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg) # type: ignore
 
         self.measure_force = self.cfg.measure_force
+        self.enable_cameras = self.cfg.enable_cameras
 
         if self.measure_force:
             self.eef_contact_sensor = ContactSensor(self.cfg.eef_contact_sensor_cfg)
@@ -212,19 +214,12 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _compute_base_actions(self):
-        real_eef_pos = torch_utils.tf_combine(
-            self.fingertip_midpoint_quat,
-            self.fingertip_midpoint_pos,
-            torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
-            torch.tensor([[0.0, 0.0, -0.17]], device=self.device).repeat(self.num_envs, 1),
-        )[1]
-
-        self.base_actions = self.base_actions_agent.get_actions(self.episode_idx, real_eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6) # (num_envs, residual_action_dim) at eef
+        self.base_actions = self.base_actions_agent.get_actions(self.episode_idx, self.eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6) # (num_envs, residual_action_dim) at eef
         self.base_actions[:, 0:3] = torch_utils.tf_combine(
             self.fingertip_midpoint_quat,
             self.base_actions[:, 0:3],
             torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
-            torch.tensor([[0.0, 0.0, 0.225]], device=self.device).repeat(self.num_envs, 1),
+            self.real_fingertip2eef,
         )[1]
 
     def _compute_intermediate_values(self, dt):
@@ -249,7 +244,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             self.fingertip_midpoint_quat,
             self.eef_pos,
             torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
-            self.fingertip2eef_offset,
+            self.sim_fingertip2eef,
         )[1]
 
         self.gripper = self._robot.data.joint_pos[:, self.gripper_dof_idx[0:1]]  # (num_envs, 1)
@@ -407,9 +402,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         )
 
         gripper_action = self.actions[:, 6:7] * self.gripper_threshold
-        ngripper = torch.clamp(self.base_actions[:, 7:8] + gripper_action, 0.0, 1.0)
-        ctrl_target_gripper_dof_pos = torch.where(ngripper > 0.5, torch.ones_like(ngripper) * self.cfg_task.close_gripper, torch.zeros_like(ngripper))
-
+        ctrl_target_gripper_dof_pos = torch.clamp(self.base_actions[:, 7:8] + gripper_action, 0.0, 1.0) * 1.6
         self.env_actions = torch.cat([ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, ctrl_target_gripper_dof_pos], dim=-1)
 
         self.generate_ctrl_signals(

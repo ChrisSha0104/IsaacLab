@@ -310,7 +310,8 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         },
     )
     
-    fingertip2eef_offset = [0.0, 0.0, 0.17]
+    sim_fingertip2eef = [0.0, 0.0, 0.17]
+    real_fingertip2eef = [0.0, 0.0, 0.225]
 
     eef_contact_sensor_cfg = ContactSensorCfg(
         prim_path="/World/envs/env_.*/robot/link7",
