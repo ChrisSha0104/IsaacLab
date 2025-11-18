@@ -75,17 +75,12 @@ FRONT_PINHOLE_CFG = sim_utils.PinholeCameraCfg.from_intrinsic_matrix(
     intrinsic_matrix=FRONT_INTR,
     height=H,
     width=W,
+    focal_length=1.93
 )
 
-front_dx = FRONT_PINHOLE_CFG.horizontal_aperture_offset 
-front_dy = FRONT_PINHOLE_CFG.vertical_aperture_offset
-
-front_offset_cam = np.eye(4)
-front_offset_cam[0, 3] = -front_dx   # shift right (+X)
-front_offset_cam[1, 3] = -front_dy   # shift up    (+Y)
+FRONT_PINHOLE_CFG.horizontal_aperture_offset = -0.04
 
 front2base = np.array(extr["cam2base"]["front2base"]).reshape(4, 4)
-front2base = front2base @ front_offset_cam  # apply offset to front2base
 
 R_front2base = front2base[:3, :3]
 q_front2base = quat_from_matrix(torch.from_numpy(R_front2base)).tolist() # wxyz
@@ -111,7 +106,7 @@ class CtrlCfg:
     rot_action_threshold = [0.097, 0.097, 0.097]
     gripper_action_threshold = [0.1]
 
-    res_pos_action_threshold = [0.00025, 0.00025, 0.00025] # 0.25mm -> action 0.5mm
+    res_pos_action_threshold = [0.05, 0.05, 0.05] # 0.25mm -> action 0.5mm
     res_rot_action_threshold = [0.097, 0.097, 0.097]
     res_gripper_action_threshold = [0.1]
 
@@ -250,7 +245,6 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     
     measure_force = False
     enable_cameras = False
-    visualize_markers = True
 
     XARM_USD_PATH = "source/isaaclab_tasks/isaaclab_tasks/direct/factory_xarm/assets/xarm7_gripper.usd"
     robot: ArticulationCfg = ArticulationCfg(
@@ -316,7 +310,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         },
     )
     
-    fingertip2eef_offset = [0.0, 0.0, 0.15]
+    fingertip2eef_offset = [0.0, 0.0, 0.17]
 
     eef_contact_sensor_cfg = ContactSensorCfg(
         prim_path="/World/envs/env_.*/robot/link7",
