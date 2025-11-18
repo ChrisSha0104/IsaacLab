@@ -219,7 +219,13 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _compute_base_actions(self):
-        self.base_actions = self.base_actions_agent.get_actions(self.episode_idx, self.eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6) # (num_envs, residual_action_dim) at eef
+        real_eef_pos = torch_utils.tf_combine( # NOTE: real eef != sim eef
+            self.fingertip_midpoint_quat,
+            self.fingertip_midpoint_pos,
+            torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
+            -self.real_fingertip2eef,
+        )[1]
+        self.base_actions = self.base_actions_agent.get_actions(self.episode_idx, real_eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6) # (num_envs, residual_action_dim) at eef
         self.base_actions[:, 0:3] = torch_utils.tf_combine(
             self.fingertip_midpoint_quat,
             self.base_actions[:, 0:3],
@@ -410,7 +416,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             roll=target_euler_xyz[:, 0], pitch=target_euler_xyz[:, 1], yaw=target_euler_xyz[:, 2]
         )
 
-        gripper_action = self.actions[:, 6:7] * self.gripper_threshold
+        gripper_action = self.actions[:, 6:7] #* self.gripper_threshold
         ctrl_target_gripper_dof_pos = torch.clamp(self.base_actions[:, 7:8] + gripper_action, 0.0, 1.0) * 1.6
         self.env_actions = torch.cat([ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, ctrl_target_gripper_dof_pos], dim=-1)
 
@@ -545,7 +551,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         task_successes = self._get_curr_successes(
             success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
         )
-        # task_engaged = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=False)
+        task_near = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=False)
 
         held_base_pos, held_base_quat = factory_utils.get_held_base_pose(
             self.held_pos, self.held_quat, self.cfg_task.name, self.cfg_task.fixed_asset_cfg, self.num_envs, self.device
@@ -593,6 +599,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             "grasp_success": grasp_successes.float(),
             "grasp_engaged": grasp_engaged.float(),
             "task_success": task_successes.float(),
+            "task_near": task_near.float(),
             "task_engaged": task_engaged.float(),
         }
 

@@ -185,6 +185,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent.reset()
 
     dt = env.unwrapped.step_dt
+    env.unwrapped.visualize_markers = True # type: ignore
 
     # reset environment
     obs = env.reset()
