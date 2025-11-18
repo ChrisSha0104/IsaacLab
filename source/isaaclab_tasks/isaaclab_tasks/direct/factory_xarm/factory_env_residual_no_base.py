@@ -49,6 +49,8 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
     def _init_residual_policy_buffers(self):
         """Initialize buffers specific to residual policy."""
         self.teleop_mode = False
+        self.visualize_markers = False
+        self.enable_cameras = False
 
         self.base_actions_agent = NearestNeighborBuffer(
             self.cfg_task.action_data_path_v2, self.num_envs, horizon=75, device=self.device # type: ignore
@@ -67,8 +69,8 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
         # ctrl params
         self.Kx = 200.0
         self.Kr = 50.0
-        self.mx = 1.0
-        self.mr = 0.1
+        self.mx = 0.1
+        self.mr = 1.0
         self.lam = 1e-2
 
     def _set_default_dynamics_parameters(self):
@@ -160,7 +162,6 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
             self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg) # type: ignore
 
         self.measure_force = self.cfg.measure_force
-        self.enable_cameras = self.cfg.enable_cameras
 
         if self.measure_force:
             self.eef_contact_sensor = ContactSensor(self.cfg.eef_contact_sensor_cfg)
@@ -213,7 +214,7 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
             self.fingertip_midpoint_quat,
             self.fingertip_midpoint_pos,
             torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
-            torch.tensor([[0.0, 0.0, -0.15]], device=self.device).repeat(self.num_envs, 1),
+            torch.tensor([[0.0, 0.0, -0.17]], device=self.device).repeat(self.num_envs, 1),
         )[1]
 
         self.base_actions = self.base_actions_agent.get_actions(self.episode_idx, real_eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6) # (num_envs, residual_action_dim) at eef
@@ -221,7 +222,7 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
             self.fingertip_midpoint_quat,
             self.base_actions[:, 0:3],
             torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
-            torch.tensor([[0.0, 0.0, 0.215]], device=self.device).repeat(self.num_envs, 1),
+            torch.tensor([[0.0, 0.0, 0.225]], device=self.device).repeat(self.num_envs, 1),
         )[1]
 
     def _compute_intermediate_values(self, dt):
@@ -420,12 +421,12 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
         ctrl_target_fingertip_midpoint_quat,
         ctrl_target_gripper_dof_pos, # (num_envs, 1)
         ):
-        if self.episode_length_buf[0] % 400 == 0:
-            self.Kx = self.cfg.ctrl.Kx_dmr_range[0] + (self.cfg.ctrl.Kx_dmr_range[1] - self.cfg.ctrl.Kx_dmr_range[0]) * np.random.rand()
-            self.Kr = self.cfg.ctrl.Kr_dmr_range[0] + (self.cfg.ctrl.Kr_dmr_range[1] - self.cfg.ctrl.Kr_dmr_range[0]) * np.random.rand()
-            self.mx = self.cfg.ctrl.mx_dmr_range[0] + (self.cfg.ctrl.mx_dmr_range[1] - self.cfg.ctrl.mx_dmr_range[0]) * np.random.rand()
-            self.mr = self.cfg.ctrl.mr_dmr_range[0] + (self.cfg.ctrl.mr_dmr_range[1] - self.cfg.ctrl.mr_dmr_range[0]) * np.random.rand()
-            self.lam = self.cfg.ctrl.lam_dmr_range[0] + (self.cfg.ctrl.lam_dmr_range[1] - self.cfg.ctrl.lam_dmr_range[0]) * np.random.rand()
+        # if self.episode_length_buf[0] % 400 == 0:
+        #     self.Kx = self.cfg.ctrl.Kx_dmr_range[0] + (self.cfg.ctrl.Kx_dmr_range[1] - self.cfg.ctrl.Kx_dmr_range[0]) * np.random.rand()
+        #     self.Kr = self.cfg.ctrl.Kr_dmr_range[0] + (self.cfg.ctrl.Kr_dmr_range[1] - self.cfg.ctrl.Kr_dmr_range[0]) * np.random.rand()
+        #     self.mx = self.cfg.ctrl.mx_dmr_range[0] + (self.cfg.ctrl.mx_dmr_range[1] - self.cfg.ctrl.mx_dmr_range[0]) * np.random.rand()
+        #     self.mr = self.cfg.ctrl.mr_dmr_range[0] + (self.cfg.ctrl.mr_dmr_range[1] - self.cfg.ctrl.mr_dmr_range[0]) * np.random.rand()
+        #     self.lam = self.cfg.ctrl.lam_dmr_range[0] + (self.cfg.ctrl.lam_dmr_range[1] - self.cfg.ctrl.lam_dmr_range[0]) * np.random.rand()
 
         self.arm_joint_pose_target, self.joint_vel_target, x_acc, _, self.eef_vel = factory_control.compute_dof_state_admittance(
             cfg=self.cfg,
@@ -850,9 +851,26 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
 
 
     def _visualize_markers(self):
-        if not self.cfg.visualize_markers:
+        if not self.visualize_markers:
             return
-        
+
+        from isaacsim.util.debug_draw import _debug_draw
+        draw = _debug_draw.acquire_debug_draw_interface()
+        draw.clear_lines()
+
+        curr_pos_list = (self.fingertip_midpoint_pos + self.scene.env_origins).cpu().numpy().tolist()
+        base_pos_list = (self.base_actions[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
+        env_pos_list = (self.env_actions[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
+
+        sizes = [5] * self.num_envs
+        red_color = [(1, 0, 0, 1)] * self.num_envs
+        blue_color = [(0, 0, 1, 1)] * self.num_envs
+        green_color = [(0, 1, 0, 1)] * self.num_envs
+
+        draw.draw_lines(curr_pos_list, base_pos_list, blue_color, sizes)
+        draw.draw_lines(base_pos_list, env_pos_list, red_color, sizes)
+        draw.draw_lines(curr_pos_list, env_pos_list, green_color, sizes)
+
         # visualize states
         # self.held_asset_marker.visualize(self.held_pos_obs_frame + self.scene.env_origins, self.held_quat)
         # self.fixed_asset_marker.visualize(self.fixed_pos_obs_frame + self.scene.env_origins, self.fixed_quat)
@@ -862,23 +880,6 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
         # self.green_sphere_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins, self.base_actions[:,3:7])
         # self.blue_sphere_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins, self.fingertip_midpoint_quat)
         # self.red_sphere_marker.visualize(self.env_actions[:, :3] + self.scene.env_origins, self.env_actions[:, 3:7])
-
-        # from isaacsim.util.debug_draw import _debug_draw
-        # draw = _debug_draw.acquire_debug_draw_interface()
-        # draw.clear_lines()
-
-        # curr_pos_list = (self.fingertip_midpoint_pos + self.scene.env_origins).cpu().numpy().tolist()
-        # base_pos_list = (self.base_actions[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
-        # env_pos_list = (self.env_actions[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
-
-        # sizes = [5] * self.num_envs
-        # red_color = [(1, 0, 0, 1)] * self.num_envs
-        # blue_color = [(0, 0, 1, 1)] * self.num_envs
-        # green_color = [(0, 1, 0, 1)] * self.num_envs
-
-        # draw.draw_lines(curr_pos_list, base_pos_list, blue_color, sizes)
-        # draw.draw_lines(base_pos_list, env_pos_list, red_color, sizes)
-        # draw.draw_lines(curr_pos_list, env_pos_list, green_color, sizes)
 
         # print("env actions:", self.env_actions[:, :3].cpu().numpy())
 
