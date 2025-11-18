@@ -102,6 +102,7 @@ def make_single_videos(root: Path, fps: int = 30, cam_idx: Optional[int] = None,
             first = cv2.imread(str(jpgs[0]))
             if first is None:
                 continue
+            H, W = first.shape[:2]
             if first.shape[:2] != (H, W):
                 first = cv2.resize(first, (W, H), interpolation=cv2.INTER_AREA)
             first = _crop(first, crop)
@@ -288,7 +289,7 @@ def main():
 
     if args.single:
         make_single_videos(root, fps=args.fps, cam_idx=args.cam_idx,
-                        eps_idx=args.eps_idx, crop=crop)
+                        eps_idx=args.eps_idx)#, crop=crop)
 
     if args.collage:
         make_collage_videos(root, fps=args.fps, cols=args.cols,
