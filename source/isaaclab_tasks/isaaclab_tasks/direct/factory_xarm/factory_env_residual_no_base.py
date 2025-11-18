@@ -162,6 +162,7 @@ class FactoryEnvResidualNoBase(DirectRLEnv):
             self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg) # type: ignore
 
         self.measure_force = self.cfg.measure_force
+        self.enable_cameras = self.cfg.enable_cameras
 
         if self.measure_force:
             self.eef_contact_sensor = ContactSensor(self.cfg.eef_contact_sensor_cfg)
