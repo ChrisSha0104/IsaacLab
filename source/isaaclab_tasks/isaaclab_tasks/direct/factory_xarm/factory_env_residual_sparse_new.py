@@ -73,8 +73,9 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         self.lam = 1e-2
 
         # vis
-        from isaacsim.util.debug_draw import _debug_draw
-        self.draw = _debug_draw.acquire_debug_draw_interface()
+        if self.visualize_markers:
+            from isaacsim.util.debug_draw import _debug_draw
+            self.draw = _debug_draw.acquire_debug_draw_interface()
 
     def _set_default_dynamics_parameters(self):
         """Set parameters defining dynamic interactions."""
