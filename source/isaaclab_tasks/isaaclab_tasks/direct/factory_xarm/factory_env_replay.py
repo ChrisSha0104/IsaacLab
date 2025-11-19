@@ -75,7 +75,7 @@ class FactoryEnvReplay(DirectRLEnv):
         self.left_finger_body_idx = self._robot.body_names.index("left_finger") 
         self.right_finger_body_idx = self._robot.body_names.index("right_finger")
         self.eef_body_idx = self._robot.body_names.index("link7") # TODO: change logic to fingertip == T(eef)
-        self.fingertip2eef_offset = torch.tensor([self.cfg.fingertip2eef_offset], device=self.device).repeat(self.num_envs, 1)
+        self.fingertip2eef_offset = torch.tensor([self.cfg.sim_fingertip2eef], device=self.device).repeat(self.num_envs, 1)
         self.arm_dof_idx, _ = self._robot.find_joints("joint.*")
         self.gripper_dof_idx, _ = self._robot.find_joints("gripper")
 
@@ -497,3 +497,16 @@ class FactoryEnvReplay(DirectRLEnv):
     def log(self, string):
         if self.verbose:
             print(f"== {string} ==")
+
+    def _visualize_markers(self):
+        from isaacsim.util.debug_draw import _debug_draw
+        draw = _debug_draw.acquire_debug_draw_interface()
+        draw.clear_lines()
+
+        curr_pos_list = (self.fingertip_midpoint_pos + self.scene.env_origins).cpu().numpy().tolist()
+        goal_pos_list = (self.goal_fingertip_pos[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
+
+        sizes = [5] * self.num_envs
+        green_color = [(0, 1, 0, 1)] * self.num_envs
+
+        draw.draw_lines(curr_pos_list, goal_pos_list, green_color, sizes)

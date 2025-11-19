@@ -178,7 +178,7 @@ class PegInsert(FactoryTask):
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=held_asset_cfg.mass),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
-            # visual_material=sim_utils.PreviewSurfaceCfg(opacity=1.0),
+            # visual_material=sim_utils.PreviewSurfaceCfg(opacity=0.3),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.4, 0.1), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
@@ -319,6 +319,12 @@ class GearMesh(FactoryTask):
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=fixed_asset_cfg.mass),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+            # visual_material=sim_utils.PreviewSurfaceCfg(
+            #     # diffuse_color=(0.02,0.02,0.02),
+            #     emissive_color=(0.0, 0.0, 0.0),
+            #     roughness=0.01,
+            #     metallic=0.0,
+            #     opacity=0.01),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.6, 0.0, 0.05), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}
@@ -344,6 +350,12 @@ class GearMesh(FactoryTask):
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=held_asset_cfg.mass),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
+            # visual_material=sim_utils.PreviewSurfaceCfg(
+            #     diffuse_color=(0.1, 0.1, 0.05),
+            #     emissive_color=(0.1, 0.1, 0.0),
+            #     roughness=0.02,
+            #     metallic=0.0,
+            #     opacity=0.01),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.4, 0.1), rot=(1.0, 0.0, 0.0, 0.0), joint_pos={}, joint_vel={}

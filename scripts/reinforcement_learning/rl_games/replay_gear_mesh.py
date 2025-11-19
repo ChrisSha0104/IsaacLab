@@ -167,10 +167,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
+    input_path = "logs/data/1117_teleop_gear_mesh_20"
+    output_path = "logs/replay/1117_teleop_gear_mesh_20"
+
     # load traj & object data
     eps_idx = list(range(20))
     assert env.unwrapped.num_envs == len(eps_idx), "Number of envs must match number of trajs to replay."
-    obj_states_path: str = "logs/data/1117_teleop_gear_mesh_20/obj_states/object_states.npz"
+    obj_states_path: str = f"{input_path}/obj_states/object_states.npz"
     obj_data = np.load(obj_states_path, allow_pickle=True)
 
     gear2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
@@ -178,10 +181,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     gearbase2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
     gearbase2base_quat = torch.zeros((len(eps_idx), 4)).to(env.device)
 
-    robot_states_path: str = "logs/data/1117_teleop_gear_mesh_20/robot_states/robot_trajectories.npz"
+    robot_states_path: str = f"{input_path}/robot_states/robot_trajectories.npz"
     robot_data = np.load(robot_states_path, allow_pickle=True)
 
-    init_robot_qpos_path = "logs/data/1117_teleop_gear_mesh_20/robot_states/init_qpos_sim.npy"
+    init_robot_qpos_path = f"{input_path}/robot_states/init_qpos_sim.npy"
     init_robot_qpos_data = np.load(init_robot_qpos_path, allow_pickle=True)
 
     max_ts = -1
@@ -240,8 +243,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # if save initial states
     if True:
-        out_path = "logs/data/1117_teleop_gear_mesh_20/initial_poses"
-        os.makedirs(out_path, exist_ok=True)
+        init_states_output_path = f"{input_path}/initial_poses"
+        os.makedirs(init_states_output_path, exist_ok=True)
         init_poses = {
             "robot": real_init_qpos, # (num_eps, 7)
             "gear_pos": gear2base_pos, # (num_eps, 3)
@@ -249,8 +252,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "base_pos": gearbase2base_pos, # (num_eps, 3)
             "base_quat": gearbase2base_quat, # (num_eps, 4)
         }
-        torch.save(init_poses, os.path.join(out_path, "initial_poses.pt"))
-        print(f"[INFO] Saved initial poses to: {os.path.join(out_path, 'initial_poses.pt')}")
+        torch.save(init_poses, os.path.join(init_states_output_path, "initial_poses.pt"))
+        print(f"[INFO] Saved initial poses to: {os.path.join(init_states_output_path, 'initial_poses.pt')}")
 
     T = max_ts
     # reset environment
@@ -276,10 +279,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     act_eef_quat = []
     act_gripper = []
 
-    debug_dir = "logs/replay/1117_gearmesh_20/debug"
+    debug_dir = f"{output_path}/debug"
     os.makedirs(debug_dir, exist_ok=True)
     for i in range(len(eps_idx)):
-        out_path = f"logs/replay/1117_gearmesh_20/episode_{eps_idx[i]:04d}"
+        out_path = f"{output_path}/episode_{eps_idx[i]:04d}"
         os.makedirs(out_path, exist_ok=True)
         cam_path = os.path.join(out_path, "camera_1", "rgb")
         os.makedirs(cam_path, exist_ok=True)
@@ -300,7 +303,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 eef_quat,
                 eef_real_pos,
                 torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device).repeat(len(eps_idx),1),
-                torch.tensor([[0.0, 0.0, 0.215]], device=env.device).repeat(len(eps_idx),1)
+                torch.tensor([[0.0, 0.0, 0.22]], device=env.device).repeat(len(eps_idx),1)
             )[1]
             actions = torch.cat([eef_sim_pos, eef_quat, gripper_pos], dim=-1)
 
@@ -313,7 +316,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             for i in range(len(eps_idx)):
                 if not valid_mask[timestep, i]:
                     continue  # skip padded timesteps
-                cam_path = f"logs/replay/1117_gearmesh_20/episode_{i:04d}/camera_1/rgb"
+                cam_path = f"{output_path}/episode_{i:04d}/camera_1/rgb"
                 img = env.unwrapped.front_rgb[i].cpu().numpy()
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(os.path.join(cam_path, f"{timestep:06d}.jpg"), img_bgr)
