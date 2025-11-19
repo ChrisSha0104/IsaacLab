@@ -11,7 +11,7 @@ class NearestNeighborBuffer:
     """Nearest-neighbor action retriever with per-env horizon queues."""
 
     def __init__(self, path: str, num_envs: int, horizon: int = 15,
-                 device: str | torch.device = "cpu"):
+                 device: str | torch.device = "cpu", pad=True):
         self._device = torch.device(device)
 
         flat = np.load(path, allow_pickle=True)
@@ -24,15 +24,16 @@ class NearestNeighborBuffer:
 
         lengths = torch.tensor([len(data[e]["obs.gripper"]) for e in eps],
                                device=self._device)
+        self._lengths = lengths
         T = int(lengths.max())
 
-        def pad_last(key, d):
-            out = torch.empty((len(eps), T, d), device=self._device)
+        def pad_last(key, d): # optional padding
+            out = torch.zeros((len(eps), T, d), device=self._device)
             for i, e in enumerate(eps):
                 x = data[e][key]
-                if len(x) < T:
+                if pad and len(x) < T:
                     x = torch.cat([x, x[-1:].repeat(T - len(x), 1)], dim=0)
-                out[i] = x
+                out[i, :len(x)] = x
             return out
 
         self._obs_pos  = pad_last("obs.eef_pos", 3)
@@ -67,6 +68,9 @@ class NearestNeighborBuffer:
 
     def get_max_episode_length(self):
         return self._max_episode_length
+    
+    def get_max_per_episode_length(self):
+        return self._lengths
 
     def clear(self,
               env_ids: torch.Tensor | np.ndarray | list,

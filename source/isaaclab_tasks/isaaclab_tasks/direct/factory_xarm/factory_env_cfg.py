@@ -93,7 +93,7 @@ class ObsRandCfg:
 
 @configclass
 class BaseActionRandCfg:
-    horizon = [15, 75]
+    horizon = [15, 105]
 
 @configclass
 class CtrlCfg:
@@ -106,7 +106,7 @@ class CtrlCfg:
     rot_action_threshold = [0.097, 0.097, 0.097]
     gripper_action_threshold = [0.1]
 
-    res_pos_action_threshold = [0.05, 0.05, 0.05] # 0.25mm -> action 0.5mm
+    res_pos_action_threshold = [0.005, 0.005, 0.005] # 0.25mm -> action 0.5mm
     res_rot_action_threshold = [0.097, 0.097, 0.097]
     res_gripper_action_threshold = [0.1]
 
@@ -245,6 +245,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     
     measure_force = False
     enable_cameras = False
+    sparse_rewards = False
 
     XARM_USD_PATH = "source/isaaclab_tasks/isaaclab_tasks/direct/factory_xarm/assets/xarm7_gripper.usd"
     robot: ArticulationCfg = ArticulationCfg(
@@ -311,7 +312,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     )
     
     sim_fingertip2eef = [0.0, 0.0, 0.17]
-    real_fingertip2eef = [0.0, 0.0, 0.225]
+    real_fingertip2eef = [0.0, 0.0, 0.22]
 
     eef_contact_sensor_cfg = ContactSensorCfg(
         prim_path="/World/envs/env_.*/robot/link7",
@@ -368,7 +369,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         prim_path="/Visuals/red_sphere_marker",
         markers={
             "sphere": sim_utils.SphereCfg(
-                radius=0.006,
+                radius=0.004,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
             )
         }
@@ -378,7 +379,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         prim_path="/Visuals/blue_sphere_marker",
         markers={
             "sphere": sim_utils.SphereCfg(
-                radius=0.006,
+                radius=0.004,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
             )
         }
@@ -388,7 +389,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
         prim_path="/Visuals/green_sphere_marker",
         markers={
             "sphere": sim_utils.SphereCfg(
-                radius=0.006,
+                radius=0.004,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
             )
         }
