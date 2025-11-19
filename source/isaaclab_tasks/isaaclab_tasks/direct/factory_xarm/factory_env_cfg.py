@@ -55,11 +55,11 @@ STATE_DIM_CFG = {
     "base_actions": 8,
 }
 
-intr_path = "logs/data/calibration/251029_rrl_2cams/intrinsics.json"
+intr_path = "logs/data/calibration/251119_rrl_1cam/intrinsics.json"
 with open(intr_path, "r") as f:
     intr = json.load(f)
 
-extr_path = "logs/data/calibration/251029_rrl_2cams/extrinsics.json"
+extr_path = "logs/data/calibration/251119_rrl_1cam/extrinsics.json"
 with open(extr_path, "r") as f:
     extr = json.load(f)
 
@@ -93,7 +93,7 @@ class ObsRandCfg:
 
 @configclass
 class BaseActionRandCfg:
-    horizon = [15, 105]
+    horizon = [45, 105]
 
 @configclass
 class CtrlCfg:
@@ -106,7 +106,7 @@ class CtrlCfg:
     rot_action_threshold = [0.097, 0.097, 0.097]
     gripper_action_threshold = [0.1]
 
-    res_pos_action_threshold = [0.005, 0.005, 0.005] # 0.25mm -> action 0.5mm
+    res_pos_action_threshold = [0.05, 0.05, 0.05] # 0.25mm -> action 0.5mm
     res_rot_action_threshold = [0.097, 0.097, 0.097]
     res_gripper_action_threshold = [0.1]
 
@@ -312,7 +312,7 @@ class FactoryEnvCfg(DirectRLEnvCfg):
     )
     
     sim_fingertip2eef = [0.0, 0.0, 0.17]
-    real_fingertip2eef = [0.0, 0.0, 0.22]
+    real_fingertip2eef = [0.0, 0.0, 0.225]
 
     eef_contact_sensor_cfg = ContactSensorCfg(
         prim_path="/World/envs/env_.*/robot/link7",

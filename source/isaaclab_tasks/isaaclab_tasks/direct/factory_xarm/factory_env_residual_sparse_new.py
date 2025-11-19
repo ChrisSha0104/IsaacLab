@@ -48,10 +48,10 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
     def _init_residual_policy_buffers(self):
         """Initialize buffers specific to residual policy."""
         self.teleop_mode = False
-        self.visualize_markers = False
+        self.visualize_markers = False # TODO: dynamic option
 
         self.base_actions_agent = NearestNeighborBuffer(
-            self.cfg_task.action_data_path_v2, self.num_envs, horizon=105, device=self.device, pad=False # type: ignore
+            self.cfg_task.action_data_path_v3, self.num_envs, horizon=105, device=self.device, pad=False # type: ignore
         )
         self.base_actions = torch.zeros((self.num_envs, 8), device=self.device)
 
@@ -62,7 +62,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         self.cfg.episode_length_s = self.base_actions_agent.get_max_episode_length() * (self.cfg.sim.dt * self.cfg.decimation)
         self.max_per_eps_length = self.base_actions_agent.get_max_per_episode_length() # (num_eps, )
 
-        self.initial_poses = torch.load(self.cfg_task.initial_poses_path_v2) # dict each of shape (tot_eps, dim) # type: ignore
+        self.initial_poses = torch.load(self.cfg_task.initial_poses_path_v3) # dict each of shape (tot_eps, dim) # type: ignore
         self.initial_poses = {k: v.unsqueeze(0).repeat((self.num_envs, 1, 1)).to(self.device) for k, v in self.initial_poses.items()} # dict each of shape (num_envs, tot_eps, dim)
 
         # ctrl params
@@ -384,7 +384,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             self._compute_intermediate_values(dt=self.physics_dt)
 
         # Interpret actions as target pos displacements and set pos target
-        pos_actions = self.actions[:, 0:3] * self.pos_threshold
+        pos_actions = self.actions[:, 0:3] * self.pos_threshold #* torch.norm(self.fingertip_midpoint_pos - self.base_actions[:, 0:3], dim=1, keepdim=True)
 
         # Interpret actions as target rot (axis-angle) displacements
         rot_actions = self.actions[:, 3:6]
@@ -575,9 +575,9 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         insert_dist = torch.linalg.vector_norm(target_held_base_pos - held_base_pos, dim=1)
         task_engaged = torch.where(insert_dist < 0.02, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
-        self.red_sphere_marker.visualize(self.env_actions[:,:3] + self.scene.env_origins)
-        self.blue_sphere_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins)
-        self.green_sphere_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins)
+        # self.red_sphere_marker.visualize(self.env_actions[:,:3] + self.scene.env_origins)
+        # self.blue_sphere_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins)
+        # self.green_sphere_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins)
 
         grasp_dist = torch.linalg.vector_norm(self.held_pos_obs_frame - self.fingertip_midpoint_pos, dim=1)
         grasp_successes = torch.where(grasp_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
