@@ -247,7 +247,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         # print("curr gripper: ", self.gripper / 1.6)
         # print("eps_idx: ", self.episode_idx)
         # print("curr eef:", self.eef_pos)
-        
+
         self.base_actions[:, 0:3] = torch_utils.tf_combine(
             self.fingertip_midpoint_quat,
             self.base_actions[:, 0:3],
@@ -440,8 +440,8 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
 
         gripper_action = self.actions[:, 6:7] #* self.gripper_threshold
         ctrl_target_gripper_dof_pos = torch.clamp(self.base_actions[:, 7:8] + gripper_action, 0.0, 1.0) * 1.6
-        if self.cfg_task.name == "peg_insert":
-            ctrl_target_gripper_dof_pos = torch.clamp(ctrl_target_gripper_dof_pos, max=self.cfg_task.close_gripper)
+        # if self.cfg_task.name == "peg_insert":
+        #     ctrl_target_gripper_dof_pos = torch.clamp(ctrl_target_gripper_dof_pos, max=self.cfg_task.close_gripper)
         self.env_actions = torch.cat([ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, ctrl_target_gripper_dof_pos], dim=-1)
 
         self.generate_ctrl_signals(
