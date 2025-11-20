@@ -51,7 +51,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         self.visualize_markers = False # TODO: dynamic option
 
         self.base_actions_agent = NearestNeighborBuffer(
-            self.cfg_task.action_data_path_v3, self.num_envs, horizon=105, device=self.device, pad=False # type: ignore
+            self.cfg_task.action_data_path_v3, self.num_envs, horizon=30, device=self.device, pad=False # type: ignore
         )
         self.base_actions = torch.zeros((self.num_envs, 8), device=self.device)
 
@@ -72,10 +72,6 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         self.mr = 0.01
         self.lam = 1e-2
 
-        # vis
-        if self.visualize_markers:
-            from isaacsim.util.debug_draw import _debug_draw
-            self.draw = _debug_draw.acquire_debug_draw_interface()
 
     def _set_default_dynamics_parameters(self):
         """Set parameters defining dynamic interactions."""
@@ -423,6 +419,8 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
 
         gripper_action = self.actions[:, 6:7] #* self.gripper_threshold
         ctrl_target_gripper_dof_pos = torch.clamp(self.base_actions[:, 7:8] + gripper_action, 0.0, 1.0) * 1.6
+        if self.cfg_task.name == "peg_insert":
+            ctrl_target_gripper_dof_pos = torch.clamp(ctrl_target_gripper_dof_pos, max=self.cfg_task.close_gripper)
         self.env_actions = torch.cat([ctrl_target_fingertip_midpoint_pos, ctrl_target_fingertip_midpoint_quat, ctrl_target_gripper_dof_pos], dim=-1)
 
         self.generate_ctrl_signals(
@@ -885,13 +883,16 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
     def _visualize_markers(self):
         if not self.visualize_markers:
             return
+        if not hasattr(self, 'draw'):
+            from isaacsim.util.debug_draw import _debug_draw
+            self.draw = _debug_draw.acquire_debug_draw_interface()
         self.draw.clear_lines()
 
         curr_pos_list = (self.fingertip_midpoint_pos + self.scene.env_origins).cpu().numpy().tolist()
         base_pos_list = (self.base_actions[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
         env_pos_list = (self.env_actions[:, :3] + self.scene.env_origins).cpu().numpy().tolist()
 
-        sizes = [5] * self.num_envs
+        sizes = [5] * self.num_envs 
         red_color = [(1, 0, 0, 1)] * self.num_envs
         blue_color = [(0, 0, 1, 1)] * self.num_envs
         green_color = [(0, 1, 0, 1)] * self.num_envs

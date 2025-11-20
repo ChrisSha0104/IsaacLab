@@ -93,7 +93,7 @@ class ObsRandCfg:
 
 @configclass
 class BaseActionRandCfg:
-    horizon = [45, 105]
+    horizon = [7, 30]
 
 @configclass
 class CtrlCfg:
@@ -106,7 +106,7 @@ class CtrlCfg:
     rot_action_threshold = [0.097, 0.097, 0.097]
     gripper_action_threshold = [0.1]
 
-    res_pos_action_threshold = [0.05, 0.05, 0.05] # 0.25mm -> action 0.5mm
+    res_pos_action_threshold = [0.03, 0.03, 0.03] # 0.25mm -> action 0.5mm
     res_rot_action_threshold = [0.097, 0.097, 0.097]
     res_gripper_action_threshold = [0.1]
 
