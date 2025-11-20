@@ -204,16 +204,18 @@ class NearestNeighborBuffer:
 
         return out
 
-    def get_episode_traj(self, eps_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def get_episode_traj(self, eps_idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Return the full (obs_pos, act_pos) trajectory for a given episode index.
+        Return the full (obs_pos, obs_quat, act_pos, act_quat) trajectory for a given episode index.
 
         Args:
             eps_idx: Integer index of the episode (0-based, in [0, self._total_episodes)).
 
         Returns:
             obs_pos: (T, 3) tensor of observed end-effector positions.
+            obs_quat: (T, 4) tensor of observed end-effector quaternions.
             act_pos: (T, 3) tensor of action end-effector positions.
+            act_quat: (T, 4) tensor of action end-effector quaternions.
         """
         # Bounds check
         if not (0 <= eps_idx < self._total_episodes):
@@ -226,9 +228,11 @@ class NearestNeighborBuffer:
 
         # Slice and optionally clone if you want to detach from internal storage
         obs_pos = self._obs_pos[eps_idx, :T, :]  # (T, 3)
+        obs_quat = self._obs_quat[eps_idx, :T, :]  # (T, 4)
         act_pos = self._act_pos[eps_idx, :T, :]  # (T, 3)
+        act_quat = self._act_quat[eps_idx, :T, :]  # (T, 4)
 
-        return obs_pos, act_pos
+        return obs_pos, obs_quat, act_pos, act_quat
 
     @torch.no_grad()
     def get_closest_obs_pos(

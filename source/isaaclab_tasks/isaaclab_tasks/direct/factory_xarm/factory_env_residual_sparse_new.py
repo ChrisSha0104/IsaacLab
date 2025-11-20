@@ -118,7 +118,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         self.held_center_pos_local = torch.zeros((self.num_envs, 3), device=self.device) # center2held transform
         if self.cfg_task.name == "gear_mesh":
             self.held_center_pos_local[:, 0] += self.cfg_task.fixed_asset_cfg.medium_gear_base_offset[0]
-            self.held_center_pos_local[:, 2] += self.cfg_task.held_asset_cfg.height / 2.0
+            self.held_center_pos_local[:, 2] += self.cfg_task.held_asset_cfg.height / 2.0 * 1.3
 
         elif self.cfg_task.name == "peg_insert":
             self.held_center_pos_local[:, 2] += self.cfg_task.held_asset_cfg.height
@@ -232,16 +232,22 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
             -self.real_fingertip2eef,
         )[1]
-        # self.red_sphere_marker.visualize(real_eef_pos)
         self.base_actions = self.base_actions_agent.get_actions(self.episode_idx, real_eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6) # (num_envs, residual_action_dim) at eef
         
-        # self.obs_base = self.base_actions_agent.get_closest_obs_pos(self.episode_idx, real_eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6, verbose=True)
-        # self.obs_base, _, self.gripper_base = self.base_actions_agent.get_closest_obs(self.episode_idx, real_eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6, verbose=True)
+        # self.green_sphere_marker.visualize(self.fingertip_midpoint_pos)
+        # self.obs_base, self.quat_base, self.gripper_base = self.base_actions_agent.get_closest_obs(self.episode_idx, real_eef_pos, self.fingertip_midpoint_quat, self.gripper / 1.6, verbose=True)
+        # self.obs_base = torch_utils.tf_combine( # NOTE: real eef != sim eef
+        #     self.quat_base,
+        #     self.obs_base,
+        #     torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1),
+        #     self.real_fingertip2eef,
+        # )[1]
         # self.blue_sphere_marker.visualize(self.obs_base)
         # print("gripper base:", self.gripper_base)
         # print("curr gripper: ", self.gripper / 1.6)
         # print("eps_idx: ", self.episode_idx)
         # print("curr eef:", self.eef_pos)
+        
         self.base_actions[:, 0:3] = torch_utils.tf_combine(
             self.fingertip_midpoint_quat,
             self.base_actions[:, 0:3],
@@ -586,15 +592,17 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
 
         target_held_base_pos[:, 2] += self.cfg_task.fixed_asset_cfg.height
         insert_dist = torch.linalg.vector_norm(target_held_base_pos - held_base_pos, dim=1)
-        task_engaged = torch.where(insert_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        task_engaged = torch.where(insert_dist < 0.02, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
         # self.red_sphere_marker.visualize(self.env_actions[:,:3] + self.scene.env_origins)
-        # self.blue_sphere_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins)
+        # self.blue_sphere_marker.visualize(self.held_pos_obs_frame + self.scene.env_origins)
+        # print("held pos obs frame:", self.held_pos_obs_frame[0])
         # self.green_sphere_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins)
+        # print("fingertip midpoint pos:", self.fingertip_midpoint_pos[0])
 
         grasp_dist = torch.linalg.vector_norm(self.held_pos_obs_frame - self.fingertip_midpoint_pos, dim=1)
-        grasp_successes = torch.where(grasp_dist < 0.0025, torch.ones_like(task_successes), torch.zeros_like(task_successes))
-        grasp_engaged = torch.where(grasp_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        grasp_successes = torch.where(grasp_dist < 0.005, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        grasp_engaged = torch.where(grasp_dist < 0.02, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
         if self.cfg_task.name == "peg_insert":
             close_gripper = torch.where(self.gripper.squeeze(-1) >= 1.57, torch.ones_like(task_successes), torch.zeros_like(task_successes))
@@ -798,7 +806,20 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
 
         if self.visualize_traj:
             assert len(env_ids) == 1, "Can only visualize one env at a time."
-            self.obs_traj, self.act_traj = self.base_actions_agent.get_episode_traj(self.episode_idx[env_ids].item())
+            self.obs_traj, obs_quat, self.act_traj, act_quat = self.base_actions_agent.get_episode_traj(self.episode_idx[env_ids].item())
+            self.obs_traj = torch_utils.tf_combine( # NOTE: real eef != sim eef
+                obs_quat,
+                self.obs_traj,
+                torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(obs_quat.shape[0], 1),
+                torch.tensor([self.cfg.real_fingertip2eef], device=self.device).repeat(obs_quat.shape[0], 1),
+            )[1]
+
+            self.act_traj = torch_utils.tf_combine( # NOTE: real eef != sim eef
+                act_quat,
+                self.act_traj,
+                torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(act_quat.shape[0], 1),
+                torch.tensor([self.cfg.real_fingertip2eef], device=self.device).repeat(obs_quat.shape[0], 1),
+            )[1]
 
     def _set_franka_to_default_pose(self, joints, env_ids):
         """Return Franka to its default joint position."""
