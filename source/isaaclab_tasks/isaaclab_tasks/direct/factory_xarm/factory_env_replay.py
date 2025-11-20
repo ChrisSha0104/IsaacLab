@@ -110,7 +110,7 @@ class FactoryEnvReplay(DirectRLEnv):
             self._large_gear_asset = Articulation(self.cfg_task.large_gear_cfg) # type: ignore
 
         self.measure_force = self.cfg.measure_force
-        self.enable_cameras = self.cfg.enable_cameras
+        self.enable_cameras = True
 
         if self.measure_force:
             self.eef_contact_sensor = ContactSensor(self.cfg.eef_contact_sensor_cfg)
@@ -338,6 +338,7 @@ class FactoryEnvReplay(DirectRLEnv):
         stay in sync (i.e., _get_dones should return all true or all false).
         """
         self._compute_intermediate_values(dt=self.physics_dt)
+        # self._visualize_markers()
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         return False, False
 

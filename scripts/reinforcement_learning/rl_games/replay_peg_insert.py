@@ -20,7 +20,7 @@ parser.add_argument("--video_length", type=int, default=200, help="Length of the
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
-parser.add_argument("--num_envs", type=int, default=9, help="Number of environments to simulate.")
+parser.add_argument("--num_envs", type=int, default=20, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rl_games_cfg_entry_point", help="Name of the RL agent configuration entry point."
@@ -167,10 +167,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
+    input_path = "logs/data/1119_teleop_peg_insert_20"
+    output_path = "logs/replay/1119_teleop_peg_insert_20"
+
     # load traj & object data
-    eps_idx = [0,1,2,3,4,5,6,7,8]
+    eps_idx = list(range(20))
     assert env.unwrapped.num_envs == len(eps_idx), "Number of envs must match number of trajs to replay."
-    obj_states_path: str = "logs/data/teleop_peg_insert_9/obj_states/object_states.npz"
+    obj_states_path: str = f"{input_path}/obj_states/object_states.npz"
     obj_data = np.load(obj_states_path, allow_pickle=True)
 
     held2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
@@ -178,10 +181,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     fixed2base_pos = torch.zeros((len(eps_idx), 3)).to(env.device)
     fixed2base_quat = torch.zeros((len(eps_idx), 4)).to(env.device)
 
-    robot_states_path: str = "logs/data/teleop_peg_insert_9/robot_states/robot_trajectories.npz"
+    robot_states_path: str = f"{input_path}/robot_states/robot_trajectories.npz"
     robot_data = np.load(robot_states_path, allow_pickle=True)
 
-    init_robot_qpos_path = "logs/data/teleop_peg_insert_9/robot_states/init_qpos_sim.npy"
+    init_robot_qpos_path = f"{input_path}/robot_states/init_qpos_sim.npy"
     init_robot_qpos_data = np.load(init_robot_qpos_path, allow_pickle=True)
 
     max_ts = -1
@@ -205,7 +208,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         held2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
         # NOTE: need formal sys id
         # fixed2base_mat = torch.from_numpy(obj_data[f"episode_0000"][1]).to(env.device).reshape(4,4)
-        fixed2base_pos[i] = torch.tensor([0.346, 0.016, 0.0]).to(env.device)
+        fixed2base_pos[i] = torch.tensor([0.37605, -0.07322, 0.0]).to(env.device)
         # print("fixed2base_pos:", fixed2base_pos[i])
         fixed2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
 
@@ -242,8 +245,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # if save initial states
     if True:
-        out_path = "logs/data/teleop_peg_insert_9/initial_poses"
-        os.makedirs(out_path, exist_ok=True)
+        init_states_output_path = f"{input_path}/initial_poses"
+        os.makedirs(init_states_output_path, exist_ok=True)
         init_poses = {
             "robot": real_init_qpos, # (num_eps, 7)
             "peg_pos": held2base_pos, # (num_eps, 3)
@@ -251,9 +254,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "base_pos": fixed2base_pos, # (num_eps, 3)
             "base_quat": fixed2base_quat, # (num_eps, 4)
         }
-        torch.save(init_poses, os.path.join(out_path, "initial_poses.pt"))
-        print(f"[INFO] Saved initial poses to: {os.path.join(out_path, 'initial_poses.pt')}")
-        exit(0)
+        torch.save(init_poses, os.path.join(init_states_output_path, "initial_poses.pt"))
+        print(f"[INFO] Saved initial poses to: {os.path.join(init_states_output_path, 'initial_poses.pt')}")
 
     T = max_ts
     # reset environment
@@ -279,8 +281,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     act_eef_quat = []
     act_gripper = []
 
+    debug_dir = f"{output_path}/debug"
+    os.makedirs(debug_dir, exist_ok=True)
     for i in range(len(eps_idx)):
-        out_path = f"logs/replay/episode_{eps_idx[i]:04d}"
+        out_path = f"{output_path}/episode_{eps_idx[i]:04d}"
         os.makedirs(out_path, exist_ok=True)
         cam_path = os.path.join(out_path, "camera_1", "rgb")
         os.makedirs(cam_path, exist_ok=True)
@@ -305,16 +309,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             )[1]
             actions = torch.cat([eef_sim_pos, eef_quat, gripper_pos], dim=-1)
 
-            obs_eef_pos.append(obs[:,:3].cpu().numpy())
+            obs_eef = torch_utils.tf_combine(
+                obs[:,3:7],
+                obs[:,:3],
+                torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device).repeat(len(eps_idx),1),
+                torch.tensor([[0.0, 0.0, -0.225]], device=env.device).repeat(len(eps_idx),1)
+            )[1]
+
+            obs_eef_pos.append(obs_eef.cpu().numpy())
             obs_eef_quat.append(obs[:,3:7].cpu().numpy())
 
-            act_eef_pos.append(actions[:,:3].cpu().numpy())
-            act_eef_quat.append(actions[:,3:7].cpu().numpy())
+            act_eef_pos.append(eef_real_pos.cpu().numpy())
+            act_eef_quat.append(eef_quat.cpu().numpy())
 
             for i in range(len(eps_idx)):
                 if not valid_mask[timestep, i]:
                     continue  # skip padded timesteps
-                cam_path = f"logs/replay/episode_{i:04d}/camera_1/rgb"
+                cam_path = f"{output_path}/episode_{i:04d}/camera_1/rgb"
                 img = env.unwrapped.front_rgb[i].cpu().numpy()
                 img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(os.path.join(cam_path, f"{timestep:06d}.jpg"), img_bgr)
@@ -367,10 +378,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         out_data[f"{k}/action.eef_pos"] = arr_act_pos[:,  i, :]
         out_data[f"{k}/action.eef_quat"]= arr_act_quat[:, i, :]
 
-    robot_path = os.path.join(out_path, "robot_data")
-    os.makedirs(robot_path, exist_ok=True)
-    np.savez_compressed(os.path.join(robot_path, "sim_trajs.npz"), **out_data)
-    print(f"[INFO] Saved simulated trajectories to: {os.path.join(robot_path,'sim_trajs.npz')}")
+    np.savez_compressed(os.path.join(debug_dir, "robot_trajectories.npz"), **out_data)
+    print(f"[INFO] Saved simulated trajectories to: {os.path.join(debug_dir,'robot_trajectories.npz')}")
 
 
 if __name__ == "__main__":

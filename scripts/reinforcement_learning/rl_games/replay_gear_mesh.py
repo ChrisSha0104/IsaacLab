@@ -167,8 +167,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
-    input_path = "logs/data/1117_teleop_gear_mesh_20"
-    output_path = "logs/replay/1117_teleop_gear_mesh_20"
+    input_path = "logs/data/1119_teleop_gear_mesh_20"
+    output_path = "logs/replay/1119_teleop_gear_mesh_20"
 
     # load traj & object data
     eps_idx = list(range(20))
@@ -207,7 +207,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         gear2base_pos[i][2] = -0.0175
         gear2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
         # NOTE: need formal sys id
-        gearbase2base_pos[i] = torch.tensor([0.3192, -0.05852, 0.0]).to(env.device)
+        gearbase2base_pos[i] = torch.tensor([0.3633, -0.096, 0.0]).to(env.device)
         gearbase2base_quat[i] = torch.tensor([1.0, 0.0, 0.0, 0.0]).to(env.device)
 
         # --- simple padding: repeat the last valid frame ---
@@ -303,15 +303,22 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 eef_quat,
                 eef_real_pos,
                 torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device).repeat(len(eps_idx),1),
-                torch.tensor([[0.0, 0.0, 0.22]], device=env.device).repeat(len(eps_idx),1)
+                torch.tensor([[0.0, 0.0, 0.225]], device=env.device).repeat(len(eps_idx),1)
             )[1]
             actions = torch.cat([eef_sim_pos, eef_quat, gripper_pos], dim=-1)
 
-            obs_eef_pos.append(obs[:,:3].cpu().numpy())
+            obs_eef = torch_utils.tf_combine(
+                obs[:,3:7],
+                obs[:,:3],
+                torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device).repeat(len(eps_idx),1),
+                torch.tensor([[0.0, 0.0, -0.225]], device=env.device).repeat(len(eps_idx),1)
+            )[1]
+
+            obs_eef_pos.append(obs_eef.cpu().numpy())
             obs_eef_quat.append(obs[:,3:7].cpu().numpy())
 
-            act_eef_pos.append(actions[:,:3].cpu().numpy())
-            act_eef_quat.append(actions[:,3:7].cpu().numpy())
+            act_eef_pos.append(eef_real_pos.cpu().numpy())
+            act_eef_quat.append(eef_quat.cpu().numpy())
 
             for i in range(len(eps_idx)):
                 if not valid_mask[timestep, i]:

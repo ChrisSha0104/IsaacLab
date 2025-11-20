@@ -103,6 +103,9 @@ class Hole8mm(FixedAssetCfg):
 class PegInsert(FactoryTask):
     initial_poses_path: str = "logs/data/teleop_peg_insert_9/initial_poses/initial_poses.pt" # NOTE: get this from replay (also validate)
     action_data_path: str = "logs/data/teleop_peg_insert_9/robot_states/robot_trajectories.npz" # NOTE: get this from teleop
+
+    initial_poses_path_v3: str = "logs/data/1119_teleop_peg_insert_20/initial_poses/initial_poses.pt" # NOTE: get this from replay (also validate)
+    action_data_path_v3: str = "logs/data/1119_teleop_peg_insert_20/robot_states/robot_trajectories.npz" # NOTE: get this from teleop
     close_gripper: float = 1.575
     
     name = "peg_insert"
