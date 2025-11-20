@@ -586,15 +586,15 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
 
         target_held_base_pos[:, 2] += self.cfg_task.fixed_asset_cfg.height
         insert_dist = torch.linalg.vector_norm(target_held_base_pos - held_base_pos, dim=1)
-        task_engaged = torch.where(insert_dist < 0.02, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        task_engaged = torch.where(insert_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
         # self.red_sphere_marker.visualize(self.env_actions[:,:3] + self.scene.env_origins)
         # self.blue_sphere_marker.visualize(self.base_actions[:,:3] + self.scene.env_origins)
         # self.green_sphere_marker.visualize(self.fingertip_midpoint_pos + self.scene.env_origins)
 
         grasp_dist = torch.linalg.vector_norm(self.held_pos_obs_frame - self.fingertip_midpoint_pos, dim=1)
-        grasp_successes = torch.where(grasp_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
-        grasp_engaged = torch.where(grasp_dist < 0.04, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        grasp_successes = torch.where(grasp_dist < 0.0025, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        grasp_engaged = torch.where(grasp_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
         if self.cfg_task.name == "peg_insert":
             close_gripper = torch.where(self.gripper.squeeze(-1) >= 1.57, torch.ones_like(task_successes), torch.zeros_like(task_successes))
