@@ -57,7 +57,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             min_horizon=1, 
             max_horizon=45, 
             device=self.device, 
-            pad=False # type: ignore
+            pad=True # type: ignore
         )
         self.base_actions = torch.zeros((self.num_envs, 8), device=self.device)
 
@@ -344,7 +344,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         state_dict = {
             "fingertip_pos": self.fingertip_midpoint_pos,
             "fingertip_pos_rel_fixed": self.fingertip_midpoint_pos - self.fixed_pos_obs_frame,
-            "fingertip_pos_rel_held": self.fingertip_midpoint_pos - self.held_pos,
+            "fingertip_pos_rel_held": self.fingertip_midpoint_pos - self.held_pos_obs_frame,
             "fingertip_quat": self.fingertip_midpoint_quat,
             "gripper": self.gripper,
             "ee_linvel": self.fingertip_midpoint_linvel,
@@ -576,7 +576,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         task_successes = self._get_curr_successes(
             success_threshold=self.cfg_task.success_threshold, check_rot=check_rot
         )
-        # task_engaged = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=False)
+        task_engaged = self._get_curr_successes(success_threshold=self.cfg_task.engage_threshold, check_rot=False)
 
         held_base_pos, held_base_quat = factory_utils.get_held_base_pose(
             self.held_pos, self.held_quat, self.cfg_task.name, self.cfg_task.fixed_asset_cfg, self.num_envs, self.device
@@ -590,9 +590,9 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             self.device,
         )
 
-        target_held_base_pos[:, 2] += self.cfg_task.fixed_asset_cfg.height
-        insert_dist = torch.linalg.vector_norm(target_held_base_pos - held_base_pos, dim=1)
-        task_engaged = torch.where(insert_dist < 0.02, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        # target_held_base_pos[:, 2] += self.cfg_task.fixed_asset_cfg.height # 2cm
+        # insert_dist = torch.linalg.vector_norm(target_held_base_pos - held_base_pos, dim=1)
+        # task_engaged = torch.where(insert_dist < 0.04, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
         # self.red_sphere_marker.visualize(self.env_actions[:,:3] + self.scene.env_origins)
         # self.blue_sphere_marker.visualize(self.held_pos_obs_frame + self.scene.env_origins)
@@ -601,8 +601,8 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
         # print("fingertip midpoint pos:", self.fingertip_midpoint_pos[0])
 
         grasp_dist = torch.linalg.vector_norm(self.held_pos_obs_frame - self.fingertip_midpoint_pos, dim=1)
-        grasp_successes = torch.where(grasp_dist < 0.005, torch.ones_like(task_successes), torch.zeros_like(task_successes))
-        grasp_engaged = torch.where(grasp_dist < 0.02, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        grasp_successes = torch.where(grasp_dist < 0.01, torch.ones_like(task_successes), torch.zeros_like(task_successes))
+        grasp_engaged = torch.where(grasp_dist < 0.04, torch.ones_like(task_successes), torch.zeros_like(task_successes))
 
         if self.cfg_task.name == "peg_insert":
             close_gripper = torch.where(self.gripper.squeeze(-1) >= 1.57, torch.ones_like(task_successes), torch.zeros_like(task_successes))
@@ -624,13 +624,13 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             task_successes = torch.logical_and(task_successes, first_task_succeeded)
 
         rew_dict = {
-            "grasp_success": grasp_successes.float(),
-            "grasp_engaged": grasp_engaged.float(),
-            "task_success": task_successes.float(),
+            "grasp_engaged": grasp_engaged.float(),# * 0.25,
+            "grasp_success": grasp_successes.float(),# * 0.5,
+            "task_engaged": task_engaged.float(),# * 0.25,
+            "task_success": task_successes.float(),# * 2.0,
             # "task_near": task_near.float(),
-            "task_engaged": task_engaged.float(),
         }
-        # print(rew_dict)
+        print(rew_dict)
 
         rew_buf = torch.zeros_like(rew_dict["task_success"])
         for rew_name, rew in rew_dict.items():
