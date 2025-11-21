@@ -636,7 +636,7 @@ class FactoryEnvResidualSparseNew(DirectRLEnv):
             "task_success": task_successes.float(),# * 2.0,
             # "task_near": task_near.float(),
         }
-        print(rew_dict)
+        # print(rew_dict)
 
         rew_buf = torch.zeros_like(rew_dict["task_success"])
         for rew_name, rew in rew_dict.items():
